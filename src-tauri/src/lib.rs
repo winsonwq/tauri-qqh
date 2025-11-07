@@ -45,6 +45,7 @@ pub struct TranscriptionParams {
     pub compression_ratio_threshold: Option<f32>,
     pub log_prob_threshold: Option<f32>,
     pub no_speech_threshold: Option<f32>,
+    pub translate: Option<bool>,
 }
 
 // 获取应用数据目录
@@ -59,6 +60,40 @@ fn get_app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| format!("无法创建应用数据目录: {}", e))?;
     
     Ok(app_data_dir)
+}
+
+// 获取 whisper-cli 可执行文件路径
+fn get_whisper_cli_path() -> Result<PathBuf, String> {
+    // 获取应用资源目录（tools 文件夹所在位置）
+    // 在开发环境中，这通常是项目根目录下的 src-tauri/tools
+    // 在生产环境中，这应该是打包后的资源目录
+    
+    // 首先尝试从环境变量或资源目录获取
+    let exe_path = std::env::current_exe()
+        .map_err(|e| format!("无法获取当前可执行文件路径: {}", e))?;
+    
+    // 获取可执行文件所在目录
+    let exe_dir = exe_path.parent()
+        .ok_or("无法获取可执行文件目录")?;
+    
+    // 尝试多个可能的路径
+    let possible_paths = vec![
+        // 开发环境：从可执行文件目录向上查找
+        exe_dir.join("../../tools/whisper/macos-arm64/bin/whisper-cli"),
+        exe_dir.join("../tools/whisper/macos-arm64/bin/whisper-cli"),
+        // 生产环境：资源目录
+        exe_dir.join("resources/tools/whisper/macos-arm64/bin/whisper-cli"),
+        // 直接使用绝对路径（开发环境）
+        PathBuf::from("/Users/aqiu/projects/qqh-tauri/src-tauri/tools/whisper/macos-arm64/bin/whisper-cli"),
+    ];
+    
+    for path in possible_paths {
+        if path.exists() && path.is_file() {
+            return Ok(path);
+        }
+    }
+    
+    Err("未找到 whisper-cli 可执行文件。请确保工具已正确打包到 tools 目录中。".to_string())
 }
 
 // 创建转写资源
@@ -133,7 +168,7 @@ async fn create_transcription_task(
     Ok(task)
 }
 
-// 执行转写任务（调用 fast-whisper）
+// 执行转写任务（调用 faster-whisper）
 #[tauri::command]
 async fn execute_transcription_task(
     task_id: String,
@@ -176,108 +211,107 @@ async fn execute_transcription_task(
     std::fs::write(&task_file, task_json)
         .map_err(|e| format!("无法更新任务文件: {}", e))?;
     
-    // 调用 fast-whisper 进行转写
+    // 调用 whisper-cli 进行转写
     let audio_path = PathBuf::from(&resource.file_path);
     let output_dir = app_data_dir.join("transcription_results");
     std::fs::create_dir_all(&output_dir)
         .map_err(|e| format!("无法创建结果目录: {}", e))?;
     
-    let output_file = output_dir.join(format!("{}.srt", task_id));
+    let output_file = output_dir.join(format!("{}.json", task_id));
     
-    // 调用 fast-whisper 进行转写
-    // 方式1: 通过 Python 脚本调用 fast-whisper
-    // 需要确保系统已安装 Python 和 fast-whisper: pip install fast-whisper
+    // 获取模型目录和模型路径
+    let models_dir = app_data_dir.join("whisper_models");
+    std::fs::create_dir_all(&models_dir)
+        .map_err(|e| format!("无法创建模型目录: {}", e))?;
+    
     let model_name = task.params.model.as_deref().unwrap_or("base");
     let language = task.params.language.as_deref().unwrap_or("zh");
     
-    // 构建 Python 命令来调用 fast-whisper
-    // 注意：这里需要根据实际环境调整 Python 路径和 fast-whisper 的调用方式
-    let python_script = format!(
-        r#"
-import sys
-from pathlib import Path
-from faster_whisper import WhisperModel
-
-def format_timestamp(seconds):
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    secs = int(seconds % 60)
-    millis = int((seconds % 1) * 1000)
-    return f"{{hours:02d}}:{{minutes:02d}}:{{secs:02d}},{{millis:03d}}"
-
-audio_path = r"{}"
-output_path = r"{}"
-model_name = "{}"
-language = "{}"
-
-try:
-    # 加载模型
-    model = WhisperModel(model_name, device="cpu", compute_type="int8")
+    // whisper.cpp 使用的模型格式是 ggml-{model_name}.bin
+    // 对于 multi-language 模型，文件名格式为 ggml-{model_name}.bin
+    let model_file_name = format!("ggml-{}.bin", model_name);
+    let model_path = models_dir.join(&model_file_name);
     
-    # 转写音频
-    segments, info = model.transcribe(
-        audio_path,
-        language=language,
-        word_timestamps=True,
-        beam_size=5
-    )
+    // 检查模型文件是否存在
+    if !model_path.exists() {
+        let err_msg = format!("模型文件不存在: {}。请先下载模型。", model_path.display());
+        eprintln!("{}", err_msg);
+        
+        task.status = "failed".to_string();
+        task.error = Some(err_msg.clone());
+        task.completed_at = Some(Utc::now().to_rfc3339());
+        
+        let task_json = serde_json::to_string_pretty(&task)
+            .map_err(|e| format!("无法序列化任务: {}", e))?;
+        std::fs::write(&task_file, task_json)
+            .map_err(|e| format!("无法更新任务文件: {}", e))?;
+        
+        resource.status = "failed".to_string();
+        resource.updated_at = Utc::now().to_rfc3339();
+        let resource_json = serde_json::to_string_pretty(&resource)
+            .map_err(|e| format!("无法序列化资源: {}", e))?;
+        std::fs::write(&resource_file, resource_json)
+            .map_err(|e| format!("无法更新资源文件: {}", e))?;
+        
+        return Err(err_msg);
+    }
     
-    # 生成 SRT 格式
-    srt_content = []
-    index = 1
-    for segment in segments:
-        start_time = format_timestamp(segment.start)
-        end_time = format_timestamp(segment.end)
-        text = segment.text.strip()
-        srt_content.append(f"{{index}}\n{{start_time}} --> {{end_time}}\n{{text}}\n")
-        index += 1
+    // 获取 whisper-cli 路径
+    let whisper_cli = get_whisper_cli_path()?;
     
-    # 保存 SRT 文件
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(srt_content))
+    // 构建 whisper-cli 命令
+    // whisper-cli 参数：
+    // -m: 模型路径
+    // -l: 语言（zh, en, auto 等）
+    // -f: 输入音频文件
+    // -oj: 输出 JSON 格式
+    // -of: 输出文件路径（不带扩展名）
+    // -tr: 翻译为英文（如果设置了 translate 参数）
+    let output_file_stem = output_file.file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or("无法获取输出文件名")?;
+    let output_file_dir = output_file.parent()
+        .ok_or("无法获取输出文件目录")?;
     
-    print("SUCCESS", flush=True)
-except Exception as e:
-    import traceback
-    error_msg = f"ERROR: {{str(e)}}\n{{traceback.format_exc()}}"
-    print(error_msg, file=sys.stderr, flush=True)
-    sys.exit(1)
-"#,
-        audio_path.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\""),
-        output_file.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\""),
-        model_name,
-        language
-    );
+    let translate = task.params.translate.unwrap_or(false);
     
-    // 将 Python 脚本保存到临时文件
-    let script_file = app_data_dir.join(format!("transcribe_{}.py", task_id));
-    std::fs::write(&script_file, python_script)
-        .map_err(|e| format!("无法创建 Python 脚本: {}", e))?;
-    
-    // 执行 Python 脚本
-    eprintln!("开始执行 Python 脚本: {}", script_file.display());
+    eprintln!("开始执行 whisper-cli: {}", whisper_cli.display());
     eprintln!("音频文件路径: {}", audio_path.display());
+    eprintln!("模型路径: {}", model_path.display());
     eprintln!("输出文件路径: {}", output_file.display());
+    eprintln!("翻译: {}", translate);
     
-    let output = tokio::process::Command::new("python3")
-        .arg(script_file.to_string_lossy().to_string())
-        .output()
+    let mut cmd = tokio::process::Command::new(&whisper_cli);
+    cmd.arg("-m")
+        .arg(&model_path)
+        .arg("-l")
+        .arg(language)
+        .arg("-f")
+        .arg(&audio_path)
+        .arg("-oj")  // 输出 JSON 格式
+        .arg("-of")
+        .arg(output_file_dir.join(output_file_stem))
+        .arg("-np");  // 不打印额外信息
+    
+    // 如果设置了翻译参数，添加 -tr 参数
+    if translate {
+        cmd.arg("-tr");
+    }
+    
+    let output = cmd.output()
         .await
         .map_err(|e| {
-            let err_msg = format!("无法执行 Python 脚本: {}。请确保已安装 Python 3 和 faster-whisper (pip install faster-whisper)", e);
+            let err_msg = format!("无法执行 whisper-cli: {}。请确保工具已正确安装。", e);
             eprintln!("{}", err_msg);
             err_msg
         })?;
     
-    // 清理临时脚本文件
-    let _ = std::fs::remove_file(&script_file);
-    
-    // 打印 Python 脚本的输出
+    // 打印 whisper-cli 的输出
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    eprintln!("Python 脚本 stdout: {}", stdout);
-    eprintln!("Python 脚本 stderr: {}", stderr);
-    eprintln!("Python 脚本退出码: {:?}", output.status.code());
+    eprintln!("whisper-cli stdout: {}", stdout);
+    eprintln!("whisper-cli stderr: {}", stderr);
+    eprintln!("whisper-cli 退出码: {:?}", output.status.code());
     
     if !output.status.success() {
         let error_msg = if !stderr.is_empty() {
@@ -285,7 +319,7 @@ except Exception as e:
         } else if !stdout.is_empty() {
             stdout.to_string()
         } else {
-            format!("Python 脚本执行失败，退出码: {:?}", output.status.code())
+            format!("whisper-cli 执行失败，退出码: {:?}", output.status.code())
         };
         
         eprintln!("转写失败: {}", error_msg);
@@ -458,6 +492,29 @@ async fn get_transcription_task(
     Ok(task)
 }
 
+// 删除转写资源
+#[tauri::command]
+async fn delete_transcription_resource(
+    resource_id: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let resources_dir = app_data_dir.join("transcription_resources");
+    let resource_file = resources_dir.join(format!("{}.json", resource_id));
+    
+    if !resource_file.exists() {
+        return Err(format!("转写资源不存在: {}", resource_id));
+    }
+    
+    // 删除资源文件
+    std::fs::remove_file(&resource_file)
+        .map_err(|e| format!("无法删除资源文件: {}", e))?;
+    
+    // 注意：不删除关联的任务，任务可以独立存在
+    
+    Ok(())
+}
+
 // 删除转写任务
 #[tauri::command]
 async fn delete_transcription_task(
@@ -528,6 +585,197 @@ async fn read_transcription_result(
     }
 }
 
+// whisper-cli 环境检测结果
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FastWhisperStatus {
+    pub whisper_cli_available: bool,
+    pub whisper_cli_path: Option<String>,
+    pub error: Option<String>,
+}
+
+// 检测 whisper-cli 环境
+#[tauri::command]
+async fn check_fast_whisper_status() -> Result<FastWhisperStatus, String> {
+    match get_whisper_cli_path() {
+        Ok(path) => {
+            // 检查文件是否可执行
+            let available = path.exists() && path.is_file();
+            Ok(FastWhisperStatus {
+                whisper_cli_available: available,
+                whisper_cli_path: if available {
+                    Some(path.to_string_lossy().to_string())
+                } else {
+                    None
+                },
+                error: if !available {
+                    Some("whisper-cli 文件不存在或不可执行".to_string())
+                } else {
+                    None
+                },
+            })
+        }
+        Err(e) => {
+            Ok(FastWhisperStatus {
+                whisper_cli_available: false,
+                whisper_cli_path: None,
+                error: Some(e),
+            })
+        }
+    }
+}
+
+// 安装 faster-whisper（已废弃，工具已打包在应用中）
+#[tauri::command]
+async fn install_faster_whisper() -> Result<String, String> {
+    // whisper-cli 已经打包在应用中，不需要安装
+    // 如果检测不到，可能是打包或路径配置问题
+    match get_whisper_cli_path() {
+        Ok(path) => {
+            Ok(format!("whisper-cli 工具已就绪，路径: {}", path.display()))
+        }
+        Err(e) => {
+            Err(format!("未找到 whisper-cli 工具: {}。请确保工具已正确打包到应用中。", e))
+        }
+    }
+}
+
+// 获取模型目录路径
+#[tauri::command]
+async fn get_models_dir(app: tauri::AppHandle) -> Result<String, String> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let models_dir = app_data_dir.join("whisper_models");
+    std::fs::create_dir_all(&models_dir)
+        .map_err(|e| format!("无法创建模型目录: {}", e))?;
+    Ok(models_dir.to_string_lossy().to_string())
+}
+
+// 已下载的模型信息
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ModelInfo {
+    pub name: String,
+    pub size: Option<u64>,
+    pub downloaded: bool,
+}
+
+// 获取已下载的模型列表
+#[tauri::command]
+async fn get_downloaded_models(app: tauri::AppHandle) -> Result<Vec<ModelInfo>, String> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let models_dir = app_data_dir.join("whisper_models");
+    std::fs::create_dir_all(&models_dir)
+        .map_err(|e| format!("无法创建模型目录: {}", e))?;
+
+    let available_models = vec!["tiny", "base", "small", "medium", "large-v1", "large-v2", "large-v3"];
+    
+    let mut models = Vec::new();
+
+    // whisper.cpp 使用的模型格式是 ggml-{model_name}.bin
+    for model_name in &available_models {
+        let model_file_name = format!("ggml-{}.bin", model_name);
+        let model_path = models_dir.join(&model_file_name);
+        
+        let downloaded = model_path.exists() && model_path.is_file();
+
+        // 如果已下载，获取文件大小
+        let size = if downloaded {
+            model_path.metadata()
+                .ok()
+                .map(|m| m.len())
+        } else {
+            None
+        };
+
+        models.push(ModelInfo {
+            name: model_name.to_string(),
+            size,
+            downloaded,
+        });
+    }
+
+    Ok(models)
+}
+
+
+// 下载模型
+#[tauri::command]
+async fn download_model(
+    model_name: String,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    // 获取模型目录
+    let app_data_dir = get_app_data_dir(&app)?;
+    let models_dir = app_data_dir.join("whisper_models");
+    std::fs::create_dir_all(&models_dir)
+        .map_err(|e| format!("无法创建模型目录: {}", e))?;
+
+    // whisper.cpp 模型文件名格式: ggml-{model_name}.bin
+    let model_file_name = format!("ggml-{}.bin", model_name);
+    let model_path = models_dir.join(&model_file_name);
+    
+    // 如果模型已存在，直接返回
+    if model_path.exists() {
+        return Ok(format!("模型 {} 已存在", model_name));
+    }
+
+    // 从 Hugging Face 下载模型
+    // whisper.cpp 模型仓库: https://huggingface.co/ggerganov/whisper.cpp
+    let model_url = format!(
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{}",
+        model_file_name
+    );
+
+    eprintln!("开始下载模型: {} 从 {}", model_name, model_url);
+
+    // 使用 reqwest 下载文件
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&model_url)
+        .send()
+        .await
+        .map_err(|e| format!("无法连接到下载服务器: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("下载失败，服务器返回状态码: {}", response.status()));
+    }
+
+    let total_size = response.content_length();
+    let mut file = tokio::fs::File::create(&model_path)
+        .await
+        .map_err(|e| format!("无法创建模型文件: {}", e))?;
+    
+    let mut stream = response.bytes_stream();
+    let mut downloaded: u64 = 0;
+
+    use futures_util::StreamExt;
+    while let Some(item) = stream.next().await {
+        let chunk = item.map_err(|e| format!("下载过程中出错: {}", e))?;
+        use tokio::io::AsyncWriteExt;
+        file.write_all(&chunk)
+            .await
+            .map_err(|e| format!("写入文件失败: {}", e))?;
+        downloaded += chunk.len() as u64;
+        
+        if let Some(total) = total_size {
+            let progress = (downloaded as f64 / total as f64) * 100.0;
+            eprintln!("下载进度: {:.1}% ({}/{} bytes)", progress, downloaded, total);
+        }
+    }
+
+    file.sync_all()
+        .await
+        .map_err(|e| format!("同步文件失败: {}", e))?;
+
+    eprintln!("模型下载完成: {}", model_path.display());
+    Ok(format!("模型 {} 下载成功", model_name))
+}
+
+// 检查文件是否存在
+#[tauri::command]
+async fn check_file_exists(file_path: String) -> Result<bool, String> {
+    let path = PathBuf::from(&file_path);
+    Ok(path.exists() && path.is_file())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -541,8 +789,15 @@ pub fn run() {
             get_transcription_resources,
             get_transcription_tasks,
             get_transcription_task,
+            delete_transcription_resource,
             delete_transcription_task,
             read_transcription_result,
+            check_fast_whisper_status,
+            install_faster_whisper,
+            get_models_dir,
+            get_downloaded_models,
+            download_model,
+            check_file_exists,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

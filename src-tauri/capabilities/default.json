@@ -12,6 +12,10 @@
     "fs:allow-write-file",
     "fs:allow-read-dir",
     "fs:allow-create",
+    {
+      "identifier": "fs:allow-exists",
+      "allow": ["**"]
+    },
     "fs:scope-appdata"
   ]
 }

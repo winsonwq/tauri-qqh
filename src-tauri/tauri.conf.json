@@ -19,7 +19,12 @@
       }
     ],
     "security": {
-      "csp": null
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"] 
+      },
+      
+      "csp": "default-src 'self'; media-src 'self' asset: https://asset.localhost;"
     }
   },
   "bundle": {

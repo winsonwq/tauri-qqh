@@ -31,9 +31,22 @@ const AppContent = () => {
 
     // 如果有 currentPage，使用对应的页面组件
     // 如果没有 currentPage，使用 default 页面
-    const PageComponent = currentPage
-      ? featurePages[currentPage]
-      : featurePages.default;
+    let PageComponent;
+    
+    if (currentPage) {
+      // 检查是否是动态路由（resource:${resourceId}）
+      if (currentPage.startsWith('resource:') && 'getResourceDetail' in featurePages) {
+        const resourceId = currentPage.replace('resource:', '');
+        const getResourceDetail = (featurePages as any).getResourceDetail;
+        if (typeof getResourceDetail === 'function') {
+          PageComponent = getResourceDetail(resourceId);
+        }
+      } else {
+        PageComponent = featurePages[currentPage];
+      }
+    } else {
+      PageComponent = featurePages.default;
+    }
 
     if (!PageComponent) {
       return (
@@ -52,7 +65,14 @@ const AppContent = () => {
     return <PageComponent />;
   };
 
-  return <main className="flex-1 p-6 bg-base-200 overflow-auto">{renderPage()}</main>;
+  // 判断是否是详情页面（详情页面需要自己控制 padding）
+  const isDetailPage = currentPage && currentPage.startsWith('resource:');
+
+  return (
+    <main className={`flex-1 bg-base-200 overflow-auto ${isDetailPage ? '' : 'p-6'}`}>
+      {renderPage()}
+    </main>
+  );
 };
 
 export default AppContent;

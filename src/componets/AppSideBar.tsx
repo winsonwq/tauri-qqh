@@ -73,10 +73,22 @@ const AppSideBar = ({ sidebarOpen, onToggleSidebar }: AppSideBarProps) => {
   };
 
   const isActive = (item: MenuItem): boolean => {
-    if (item.page) {
-      return currentFeature === item.feature && currentPage === item.page;
+    // 首先检查 feature 是否匹配
+    if (currentFeature !== item.feature) {
+      return false;
     }
-    return currentFeature === item.feature && !currentPage;
+    
+    // 如果菜单项有 page 属性
+    if (item.page) {
+      // 需要精确匹配 page（不包括动态路由）
+      return currentPage === item.page;
+    }
+    
+    // 如果菜单项没有 page 属性（如首页）
+    // 只要 feature 匹配就认为是 active
+    // 这样可以确保在首页的子页面（如资源详情页）时，首页菜单项仍然保持选中状态
+    // 注意：即使 currentPage 是动态路由（如 'resource:xxx'），也应该返回 true
+    return true;
   };
 
   const renderMenuItem = (item: MenuItem, parentKey?: string) => {
@@ -110,12 +122,14 @@ const AppSideBar = ({ sidebarOpen, onToggleSidebar }: AppSideBarProps) => {
               {item.label}
             </summary>
             <ul>
-              {item.children!.map((child) => {
+              {item.children.map((child) => {
                 const ChildIconComponent = child.icon;
+                const childActive = isActive(child);
+                const childLinkClassName = childActive ? 'active' : '';
                 return (
                   <li key={child.key}>
                     <a
-                      className={isActive(child) ? 'active' : ''}
+                      className={childLinkClassName || undefined}
                       onClick={(e) => {
                         e.stopPropagation();
                         handleMenuClick(child, item.key);
@@ -133,11 +147,16 @@ const AppSideBar = ({ sidebarOpen, onToggleSidebar }: AppSideBarProps) => {
       );
     }
 
+    // 构建类名，确保 active 类正确应用
+    const linkClassName = active ? 'active' : '';
+    
     return (
       <li key={item.key}>
         <a
-          className={active ? 'active' : ''}
+          className={linkClassName || undefined}
           onClick={() => handleMenuClick(item)}
+          role="button"
+          tabIndex={0}
         >
           {IconComponent && <IconComponent className="h-3.5 w-3.5" />}
           {item.label}

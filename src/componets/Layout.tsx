@@ -1,10 +1,21 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useAppDispatch, useAppSelector } from "../redux/hooks";
+import { setCurrentFeature } from "../redux/slices/featureKeysSlice";
 import AppSideBar from "./AppSideBar";
 import AppContent from "./AppContent";
 import { FaBars } from "react-icons/fa";
 
 const Layout = () => {
+  const dispatch = useAppDispatch();
+  const { currentFeature } = useAppSelector((state) => state.featureKeys);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  // 初始化时，如果当前没有选中的功能，默认设置为首页
+  useEffect(() => {
+    if (!currentFeature) {
+      dispatch(setCurrentFeature('home'));
+    }
+  }, [currentFeature, dispatch]);
 
   const handleToggleSidebar = () => {
     setSidebarOpen(!sidebarOpen);

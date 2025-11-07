@@ -34,5 +34,6 @@ export interface TranscriptionParams {
   compression_ratio_threshold?: number; // 压缩比阈值
   log_prob_threshold?: number; // 对数概率阈值
   no_speech_threshold?: number; // 无语音阈值
+  translate?: boolean; // 是否翻译为英文
 }
 

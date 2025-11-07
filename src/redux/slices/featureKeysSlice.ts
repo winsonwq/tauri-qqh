@@ -21,13 +21,17 @@ const featureKeysSlice = createSlice({
       state.currentPage = null;
       state.breadcrumbs = [{ feature: action.payload }];
     },
-    setCurrentPage: (state, action: PayloadAction<{ feature: string; page: string }>) => {
+    setCurrentPage: (state, action: PayloadAction<{ feature: string; page: string | null }>) => {
       state.currentFeature = action.payload.feature;
       state.currentPage = action.payload.page;
-      state.breadcrumbs = [
-        { feature: action.payload.feature },
-        { feature: action.payload.feature, page: action.payload.page },
-      ];
+      if (action.payload.page) {
+        state.breadcrumbs = [
+          { feature: action.payload.feature },
+          { feature: action.payload.feature, page: action.payload.page },
+        ];
+      } else {
+        state.breadcrumbs = [{ feature: action.payload.feature }];
+      }
     },
     resetFeatureKeys: (state) => {
       state.currentFeature = null;
