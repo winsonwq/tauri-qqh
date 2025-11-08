@@ -253,7 +253,6 @@ async fn create_transcription_task(
 async fn execute_transcription_task(
     task_id: String,
     resource_id: String,
-    event_id: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     // 读取资源文件获取音频文件路径
@@ -284,6 +283,22 @@ async fn execute_transcription_task(
     
     let mut task: TranscriptionTask = serde_json::from_str(&task_content)
         .map_err(|e| format!("无法解析任务文件: {}", e))?;
+    
+    // 检查任务是否已经在运行
+    let running_tasks: State<'_, RunningTasks> = app.state();
+    if running_tasks.contains(&task_id).await {
+        eprintln!("任务 {} 已经在运行中，跳过重复执行", task_id);
+        // 如果任务状态不是 running，更新为 running（可能是在重新进入页面时）
+        if task.status != "running" {
+            task.status = "running".to_string();
+            let task_json = serde_json::to_string_pretty(&task)
+                .map_err(|e| format!("无法序列化任务: {}", e))?;
+            std::fs::write(&task_file, task_json)
+                .map_err(|e| format!("无法更新任务文件: {}", e))?;
+        }
+        // 返回一个占位符，表示任务已经在运行
+        return Ok("任务已经在运行中".to_string());
+    }
     
     // 更新任务状态为 running
     task.status = "running".to_string();
@@ -401,18 +416,10 @@ async fn execute_transcription_task(
     let running_tasks: State<'_, RunningTasks> = app.state();
     running_tasks.insert(task_id.clone(), child).await;
     
-    // 创建事件名称
-    // 如果提供了 event_id，使用独立的事件名（transcription-stdout-{event_id} 和 transcription-stderr-{event_id}）
-    // 否则使用旧的事件名（transcription-log-{task_id}）以保持向后兼容
-    let (stdout_event_name, stderr_event_name) = if let Some(eid) = event_id {
-        (
-            format!("transcription-stdout-{}", eid),
-            format!("transcription-stderr-{}", eid),
-        )
-    } else {
-        let log_event_name = format!("transcription-log-{}", task_id);
-        (log_event_name.clone(), log_event_name)
-    };
+    // 创建事件名称：始终使用固定的 task_id 作为事件名，这样前端可以随时重新订阅
+    // 不再使用 event_id，因为监听和运行已经分离
+    let stdout_event_name = format!("transcription-stdout-{}", task_id);
+    let stderr_event_name = format!("transcription-stderr-{}", task_id);
     
     // 使用辅助函数并发读取 stdout 和 stderr，实时发送事件
     let stdout_handle = spawn_stream_reader(
@@ -569,61 +576,67 @@ async fn stop_transcription_task(
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let running_tasks: State<'_, RunningTasks> = app.state();
+    let app_data_dir = get_app_data_dir(&app)?;
+    let tasks_dir = app_data_dir.join("transcription_tasks");
+    let task_file = tasks_dir.join(format!("{}.json", task_id));
     
-    // 检查任务是否正在运行
-    if !running_tasks.contains(&task_id).await {
-        return Err(format!("任务 {} 不在运行中", task_id));
+    // 首先读取任务文件，检查任务状态
+    if !task_file.exists() {
+        return Err(format!("任务 {} 不存在", task_id));
     }
     
-    // 从 HashMap 中获取进程句柄
-    if let Some(child_arc) = running_tasks.get(&task_id).await {
-        // 获取 child 的锁
-        let mut child = child_arc.lock().await;
-        
-        // 尝试优雅地终止进程（发送 SIGTERM）
-        if let Err(e) = child.kill().await {
-            eprintln!("终止进程失败: {}", e);
-            return Err(format!("无法终止进程: {}", e));
+    let task_content = std::fs::read_to_string(&task_file)
+        .map_err(|e| format!("无法读取任务文件: {}", e))?;
+    
+    let mut task: TranscriptionTask = serde_json::from_str(&task_content)
+        .map_err(|e| format!("无法解析任务文件: {}", e))?;
+    
+    // 如果任务状态不是 RUNNING，不允许停止
+    if task.status != "running" {
+        return Err(format!("任务 {} 不在运行中（当前状态: {}）", task_id, task.status));
+    }
+    
+    // 检查任务是否在 running_tasks 中（实际有进程在运行）
+    if running_tasks.contains(&task_id).await {
+        // 从 HashMap 中获取进程句柄
+        if let Some(child_arc) = running_tasks.get(&task_id).await {
+            // 获取 child 的锁
+            let mut child = child_arc.lock().await;
+            
+            // 尝试优雅地终止进程（发送 SIGTERM）
+            if let Err(e) = child.kill().await {
+                eprintln!("终止进程失败: {}", e);
+                // 即使终止失败，也继续更新任务状态为失败
+            } else {
+                // 释放锁，等待进程退出
+                drop(child);
+                
+                // 等待进程退出
+                let mut child = child_arc.lock().await;
+                let _ = child.wait().await;
+            }
+            
+            // 从 RunningTasks 中移除
+            let _ = running_tasks.remove(&task_id).await;
+            
+            eprintln!("已停止任务: {}", task_id);
         }
-        
-        // 释放锁，等待进程退出
-        drop(child);
-        
-        // 等待进程退出
-        let mut child = child_arc.lock().await;
-        let _ = child.wait().await;
-        
-        // 从 RunningTasks 中移除
-        let _ = running_tasks.remove(&task_id).await;
-        
-        eprintln!("已停止任务: {}", task_id);
-        
-        // 更新任务状态为 failed（因为是被用户停止的）
-        let app_data_dir = get_app_data_dir(&app)?;
-        let tasks_dir = app_data_dir.join("transcription_tasks");
-        let task_file = tasks_dir.join(format!("{}.json", task_id));
-        
-        if task_file.exists() {
-            let task_content = std::fs::read_to_string(&task_file)
-                .map_err(|e| format!("无法读取任务文件: {}", e))?;
-            
-            let mut task: TranscriptionTask = serde_json::from_str(&task_content)
-                .map_err(|e| format!("无法解析任务文件: {}", e))?;
-            
-            task.status = "failed".to_string();
-            task.error = Some("任务已被用户停止".to_string());
-            task.completed_at = Some(Utc::now().to_rfc3339());
-            
-            let task_json = serde_json::to_string_pretty(&task)
-                .map_err(|e| format!("无法序列化任务: {}", e))?;
-            std::fs::write(&task_file, task_json)
-                .map_err(|e| format!("无法更新任务文件: {}", e))?;
-        }
-        
-        Ok(())
     } else {
-        Err(format!("无法获取任务 {} 的进程句柄", task_id))
+        // 任务状态是 RUNNING，但不在 running_tasks 中（可能是进程已崩溃或卡住）
+        eprintln!("任务 {} 状态为 RUNNING，但不在运行列表中，直接标记为失败", task_id);
     }
+    
+    // 更新任务状态为 failed（因为是被用户停止的）
+    task.status = "failed".to_string();
+    task.error = Some("任务已被用户停止".to_string());
+    task.completed_at = Some(Utc::now().to_rfc3339());
+    
+    let task_json = serde_json::to_string_pretty(&task)
+        .map_err(|e| format!("无法序列化任务: {}", e))?;
+    std::fs::write(&task_file, task_json)
+        .map_err(|e| format!("无法更新任务文件: {}", e))?;
+    
+    Ok(())
 }
 
 // 获取所有转写资源

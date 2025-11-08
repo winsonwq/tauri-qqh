@@ -19,11 +19,6 @@ import TranscriptionHistory from './components/TranscriptionHistory';
 import LoadingCard from './components/LoadingCard';
 import CreateTranscriptionTaskModal from './components/CreateTranscriptionTaskModal';
 
-// 生成唯一的事件 ID
-function generateEventId(): string {
-  return `transcription-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
-}
-
 const ResourceDetailPage = () => {
   const dispatch = useAppDispatch();
   const { currentPage } = useAppSelector((state) => state.featureKeys);
@@ -36,18 +31,173 @@ const ResourceDetailPage = () => {
   const [showCreateTaskModal, setShowCreateTaskModal] = useState(false);
   
   // 用于存储事件监听器的清理函数
-  const unlistenRef = useRef<{ stdout?: UnlistenFn; stderr?: UnlistenFn }>({});
+  const unlistenRef = useRef<{ stdout?: UnlistenFn; stderr?: UnlistenFn; taskId?: string }>({});
+  // 用于跟踪是否正在设置监听器，避免并发调用
+  const isSettingUpRef = useRef<boolean>(false);
+  // 用于跟踪正在设置的 taskId，防止重复设置
+  const settingUpTaskIdRef = useRef<string | null>(null);
 
   // 从 currentPage 中提取 resourceId（格式：resource:${resourceId}）
   const resourceId = currentPage?.startsWith('resource:') ? currentPage.replace('resource:', '') : null;
 
+  // 清理事件监听器
+  const cleanupEventListeners = useCallback(() => {
+    console.log('清理事件监听器, 当前 taskId:', unlistenRef.current.taskId);
+    if (unlistenRef.current.stdout) {
+      try {
+        unlistenRef.current.stdout();
+        console.log('已清理 stdout 监听器');
+      } catch (err) {
+        console.error('清理 stdout 监听器失败:', err);
+      }
+      unlistenRef.current.stdout = undefined;
+    }
+    if (unlistenRef.current.stderr) {
+      try {
+        unlistenRef.current.stderr();
+        console.log('已清理 stderr 监听器');
+      } catch (err) {
+        console.error('清理 stderr 监听器失败:', err);
+      }
+      unlistenRef.current.stderr = undefined;
+    }
+    unlistenRef.current.taskId = undefined;
+    isSettingUpRef.current = false;
+    settingUpTaskIdRef.current = null;
+  }, []);
+
+  // 为运行中的任务设置事件监听器
+  const setupEventListeners = useCallback(async (taskId: string) => {
+    // 如果已经在监听这个任务，不需要重复设置
+    if (unlistenRef.current.taskId === taskId) {
+      console.log('已经在监听该任务，跳过:', taskId);
+      return;
+    }
+
+    // 如果正在为同一个任务设置监听器，跳过
+    if (isSettingUpRef.current && settingUpTaskIdRef.current === taskId) {
+      console.log('正在为该任务设置监听器，跳过重复调用:', taskId);
+      return;
+    }
+
+    // 如果正在为不同任务设置监听器，等待完成（但这种情况应该很少发生）
+    if (isSettingUpRef.current && settingUpTaskIdRef.current !== taskId) {
+      console.log('正在为其他任务设置监听器，等待完成:', settingUpTaskIdRef.current);
+      // 等待一小段时间后重试
+      await new Promise(resolve => setTimeout(resolve, 100));
+      // 重试前再次检查
+      if (unlistenRef.current.taskId === taskId) {
+        return;
+      }
+      if (isSettingUpRef.current && settingUpTaskIdRef.current === taskId) {
+        return;
+      }
+    }
+
+    // 标记正在设置
+    isSettingUpRef.current = true;
+    settingUpTaskIdRef.current = taskId;
+
+    try {
+      // 清理之前的事件监听器
+      cleanupEventListeners();
+
+      // 再次检查，防止在清理过程中状态发生变化
+      if (unlistenRef.current.taskId === taskId) {
+        console.log('清理后发现已经在监听该任务，跳过:', taskId);
+        isSettingUpRef.current = false;
+        settingUpTaskIdRef.current = null;
+        return;
+      }
+
+      // 初始化任务的日志数组（确保 Redux 中有该任务的日志数组）
+      dispatch(appendLog({ taskId, log: '' }));
+
+      // 设置 stdout 事件监听，将日志存储到 Redux
+      const stdoutEventName = `transcription-stdout-${taskId}`;
+      console.log('设置 stdout 事件监听器:', stdoutEventName, 'taskId:', taskId);
+      try {
+        const unlistenStdout = await listen<string>(stdoutEventName, (event) => {
+          // 检查是否还在监听这个任务（防止清理后仍然收到事件）
+          if (unlistenRef.current.taskId !== taskId) {
+            console.log('收到 stdout 事件但任务已切换，忽略:', event.payload, 'taskId:', taskId, '当前 taskId:', unlistenRef.current.taskId);
+            return;
+          }
+          console.log('收到 stdout 事件:', event.payload, 'taskId:', taskId);
+          // 将日志存储到 Redux（过滤空字符串）
+          if (event.payload.trim()) {
+            dispatch(appendLog({ taskId, log: event.payload }));
+          }
+        });
+        unlistenRef.current.stdout = unlistenStdout;
+      } catch (err) {
+        console.error('设置 stdout 监听器失败:', err);
+        isSettingUpRef.current = false;
+        settingUpTaskIdRef.current = null;
+        return;
+      }
+
+      // 设置 stderr 事件监听，将日志存储到 Redux
+      const stderrEventName = `transcription-stderr-${taskId}`;
+      console.log('设置 stderr 事件监听器:', stderrEventName, 'taskId:', taskId);
+      try {
+        const unlistenStderr = await listen<string>(stderrEventName, (event) => {
+          // 检查是否还在监听这个任务（防止清理后仍然收到事件）
+          if (unlistenRef.current.taskId !== taskId) {
+            console.log('收到 stderr 事件但任务已切换，忽略:', event.payload, 'taskId:', taskId, '当前 taskId:', unlistenRef.current.taskId);
+            return;
+          }
+          console.log('收到 stderr 事件:', event.payload, 'taskId:', taskId);
+          // 将日志存储到 Redux（过滤空字符串）
+          if (event.payload.trim()) {
+            dispatch(appendLog({ taskId, log: event.payload }));
+          }
+        });
+        unlistenRef.current.stderr = unlistenStderr;
+        unlistenRef.current.taskId = taskId;
+        isSettingUpRef.current = false;
+        settingUpTaskIdRef.current = null;
+        console.log('成功设置事件监听器:', taskId);
+      } catch (err) {
+        console.error('设置 stderr 监听器失败:', err);
+        isSettingUpRef.current = false;
+        settingUpTaskIdRef.current = null;
+      }
+    } catch (err) {
+      console.error('设置监听器失败:', err);
+      isSettingUpRef.current = false;
+      settingUpTaskIdRef.current = null;
+    }
+  }, [cleanupEventListeners, dispatch]);
+
   useEffect(() => {
+    // 当 resourceId 变化时，清理所有旧的监听器
+    cleanupEventListeners();
+    
     if (resourceId) {
       loadResource();
       loadTasks();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resourceId]);
+
+  // 当任务列表加载完成后，检查是否有运行中的任务并设置监听器
+  // 注意：这个 useEffect 主要负责清理非运行中任务的监听器
+  // 实际的监听器设置由下面的 useEffect 统一处理，避免重复订阅
+  useEffect(() => {
+    if (tasks.length === 0) return;
+
+    // 检查是否有运行中的任务
+    const runningTask = tasks.find(t => t.status === TranscriptionTaskStatus.RUNNING);
+    if (!runningTask) {
+      // 如果没有运行中的任务，清理监听器
+      if (unlistenRef.current.taskId) {
+        cleanupEventListeners();
+      }
+    }
+    // 注意：不再在这里设置监听器，统一由下面的 useEffect 处理
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks]);
 
   // 轮询任务列表，检测运行中的任务并自动切换
   useEffect(() => {
@@ -69,29 +219,78 @@ const ResourceDetailPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tasks, resourceId]);
 
-  // 当选中任务变化时，自动加载转写结果
+  // 当选中任务变化时，自动加载转写结果，并为运行中的任务设置监听器
+  // 这是唯一设置监听器的地方，避免重复订阅
   useEffect(() => {
+    let isCancelled = false;
+
     const loadResult = async () => {
       if (!selectedTaskId) {
         setResultContent(null);
+        // 清理监听器
+        if (unlistenRef.current.taskId) {
+          cleanupEventListeners();
+        }
         return;
       }
-      // 检查任务状态，只有已完成的任务才加载结果
+      // 检查任务状态
       const task = tasks.find(t => t.id === selectedTaskId);
-      if (!task || task.status !== TranscriptionTaskStatus.COMPLETED) {
+      if (!task) {
         setResultContent(null);
+        // 清理监听器
+        if (unlistenRef.current.taskId) {
+          cleanupEventListeners();
+        }
         return;
       }
-      try {
-        const content = await invoke<string>('read_transcription_result', { taskId: selectedTaskId });
-        setResultContent(content);
-      } catch (err) {
-        console.error('读取结果失败:', err);
-        setResultContent(null);
+
+      // 如果任务正在运行，且还没有设置监听器，则设置事件监听器
+      if (task.status === TranscriptionTaskStatus.RUNNING) {
+        // 检查是否已经取消（组件卸载或状态变化）
+        if (isCancelled) return;
+        
+        // 只有在确实需要设置时才设置（避免重复）
+        if (unlistenRef.current.taskId !== task.id && 
+            !(isSettingUpRef.current && settingUpTaskIdRef.current === task.id)) {
+          await setupEventListeners(task.id);
+        }
+      } else {
+        // 如果任务不是运行中，清理监听器
+        if (unlistenRef.current.taskId) {
+          cleanupEventListeners();
+        }
+      }
+
+      // 检查是否已经取消
+      if (isCancelled) return;
+
+      // 只有已完成的任务才加载结果
+      if (task.status === TranscriptionTaskStatus.COMPLETED) {
+        try {
+          const content = await invoke<string>('read_transcription_result', { taskId: selectedTaskId });
+          if (!isCancelled) {
+            setResultContent(content);
+          }
+        } catch (err) {
+          console.error('读取结果失败:', err);
+          if (!isCancelled) {
+            setResultContent(null);
+          }
+        }
+      } else {
+        if (!isCancelled) {
+          setResultContent(null);
+        }
       }
     };
+    
     loadResult();
-  }, [selectedTaskId, tasks]);
+
+    // 清理函数：标记为已取消
+    return () => {
+      isCancelled = true;
+    };
+  }, [selectedTaskId, tasks, setupEventListeners, cleanupEventListeners]);
 
   // 加载资源信息
   const loadResource = async () => {
@@ -197,18 +396,6 @@ const ResourceDetailPage = () => {
     setShowCreateTaskModal(true);
   };
 
-  // 清理事件监听器
-  const cleanupEventListeners = useCallback(() => {
-    if (unlistenRef.current.stdout) {
-      unlistenRef.current.stdout();
-      unlistenRef.current.stdout = undefined;
-    }
-    if (unlistenRef.current.stderr) {
-      unlistenRef.current.stderr();
-      unlistenRef.current.stderr = undefined;
-    }
-  }, []);
-
   // 创建转写任务（从弹窗确认后调用）
   const handleCreateTask = async (params: TranscriptionParams) => {
     if (!resourceId) return;
@@ -228,51 +415,24 @@ const ResourceDetailPage = () => {
       // 重新加载任务列表以获取最新状态（不自动切换，因为已经手动切换了）
       await loadTasks(false);
 
-      // 清理之前的事件监听器
-      cleanupEventListeners();
-
-      // 生成唯一的事件 ID
-      const eventId = generateEventId();
-
-      // 初始化任务的日志数组（确保 Redux 中有该任务的日志数组）
-      // 通过 dispatch 一个空字符串来初始化，Redux slice 会创建数组但不会添加空字符串
-      dispatch(appendLog({ taskId: task.id, log: '' }));
-
-      // 设置 stdout 事件监听，将日志存储到 Redux
-      const stdoutEventName = `transcription-stdout-${eventId}`;
-      console.log('设置 stdout 事件监听器:', stdoutEventName, 'taskId:', task.id);
-      const unlistenStdout = await listen<string>(stdoutEventName, (event) => {
-        console.log('收到 stdout 事件:', event.payload, 'taskId:', task.id);
-        // 将日志存储到 Redux（过滤空字符串）
-        if (event.payload.trim()) {
-          dispatch(appendLog({ taskId: task.id, log: event.payload }));
-        }
-      });
-      unlistenRef.current.stdout = unlistenStdout;
-
-      // 设置 stderr 事件监听，将日志存储到 Redux
-      const stderrEventName = `transcription-stderr-${eventId}`;
-      console.log('设置 stderr 事件监听器:', stderrEventName, 'taskId:', task.id);
-      const unlistenStderr = await listen<string>(stderrEventName, (event) => {
-        console.log('收到 stderr 事件:', event.payload, 'taskId:', task.id);
-        // 将日志存储到 Redux（过滤空字符串）
-        if (event.payload.trim()) {
-          dispatch(appendLog({ taskId: task.id, log: event.payload }));
-        }
-      });
-      unlistenRef.current.stderr = unlistenStderr;
-
       // 异步执行转写任务（不阻塞 UI）
-      // 先立即刷新一次任务列表，以获取更新后的 running 状态
-      setTimeout(() => {
-        loadTasks(true);
-      }, 500); // 延迟 500ms 以确保 Rust 端已更新状态
+      // 立即刷新一次任务列表，以获取更新后的 running 状态
+      loadTasks(true);
       
-      invoke<string>('execute_transcription_task', {
+      // 执行任务（不等待完成）
+      // 注意：监听器会在任务状态变为 RUNNING 后，通过 useEffect 自动设置
+      const executePromise = invoke<string>('execute_transcription_task', {
         taskId: task.id,
         resourceId: resourceId,
-        eventId: eventId,
-      }).then(() => {
+      });
+      
+      // 任务开始执行后，短延迟刷新以确保状态已更新为 RUNNING
+      setTimeout(() => {
+        loadTasks(true);
+      }, 200);
+      
+      // 等待任务完成
+      executePromise.then(() => {
         // 执行完成后清理事件监听器
         cleanupEventListeners();
         // 重新加载任务列表（自动切换到已完成的任务）
@@ -288,17 +448,26 @@ const ResourceDetailPage = () => {
     } catch (err) {
       console.error('创建转写任务失败:', err);
       message.error(err instanceof Error ? err.message : '创建转写任务失败');
-      // 清理事件监听器
-      cleanupEventListeners();
     }
   };
 
   // 组件卸载时清理事件监听器
   useEffect(() => {
     return () => {
-      cleanupEventListeners();
+      // 组件卸载时，确保清理所有监听器
+      if (unlistenRef.current.stdout) {
+        unlistenRef.current.stdout();
+      }
+      if (unlistenRef.current.stderr) {
+        unlistenRef.current.stderr();
+      }
+      unlistenRef.current.stdout = undefined;
+      unlistenRef.current.stderr = undefined;
+      unlistenRef.current.taskId = undefined;
+      isSettingUpRef.current = false;
+      settingUpTaskIdRef.current = null;
     };
-  }, [cleanupEventListeners]);
+  }, []);
 
   if (!resource) {
     return (
