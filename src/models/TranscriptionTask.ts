@@ -7,6 +7,7 @@ export interface TranscriptionTask {
   completed_at?: string; // 完成时间
   result?: string; // 转写结果（SRT 内容或文件路径）
   error?: string; // 错误信息
+  log?: string; // 运行日志（stdout + stderr）
   params: TranscriptionParams; // 转写参数
 }
 

@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use uuid::Uuid;
 use chrono::Utc;
+use tokio::io::AsyncRead;
+use tokio::task::JoinHandle;
 
 // 转写资源模型
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -25,6 +27,7 @@ pub struct TranscriptionTask {
     pub completed_at: Option<String>,
     pub result: Option<String>,
     pub error: Option<String>,
+    pub log: Option<String>, // 运行日志（stdout + stderr）
     pub params: TranscriptionParams,
 }
 
@@ -96,6 +99,41 @@ fn get_whisper_cli_path() -> Result<PathBuf, String> {
     Err("未找到 whisper-cli 可执行文件。请确保工具已正确打包到 tools 目录中。".to_string())
 }
 
+// 辅助函数：读取流并实时发送事件
+fn spawn_stream_reader(
+    stream: impl AsyncRead + Send + Unpin + 'static,
+    app: tauri::AppHandle,
+    event_name: String,
+    stream_type: &'static str,
+    enable_debug: bool,
+) -> JoinHandle<String> {
+    tokio::spawn(async move {
+        use tokio::io::AsyncBufReadExt;
+        let reader = tokio::io::BufReader::new(stream);
+        let mut lines = reader.lines();
+        let mut output = String::new();
+        
+        if enable_debug {
+            eprintln!("开始监听 {}，事件名称: {}", stream_type, event_name);
+        }
+        
+        while let Ok(Some(line)) = lines.next_line().await {
+            let line_with_newline = format!("{}\n", line);
+            output.push_str(&line_with_newline);
+            // 实时发送到前端
+            if enable_debug {
+                eprintln!("发送 {} 日志: {}", stream_type, line);
+            }
+            if let Err(e) = app.emit(&event_name, &line) {
+                if enable_debug {
+                    eprintln!("发送日志事件失败: {}", e);
+                }
+            }
+        }
+        output
+    })
+}
+
 // 创建转写资源
 #[tauri::command]
 async fn create_transcription_resource(
@@ -149,6 +187,7 @@ async fn create_transcription_task(
         completed_at: None,
         result: None,
         error: None,
+        log: None,
         params,
     };
     
@@ -173,6 +212,7 @@ async fn create_transcription_task(
 async fn execute_transcription_task(
     task_id: String,
     resource_id: String,
+    event_id: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     // 读取资源文件获取音频文件路径
@@ -290,36 +330,100 @@ async fn execute_transcription_task(
         .arg(&audio_path)
         .arg("-oj")  // 输出 JSON 格式
         .arg("-of")
-        .arg(output_file_dir.join(output_file_stem))
-        .arg("-np");  // 不打印额外信息
+        .arg(output_file_dir.join(output_file_stem));
+        // 移除 -np 参数，以便能看到实时输出
     
     // 如果设置了翻译参数，添加 -tr 参数
     if translate {
         cmd.arg("-tr");
     }
     
-    let output = cmd.output()
-        .await
+    // 设置 stdout 和 stderr 为管道，以便实时读取
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    
+    // 启动进程
+    let mut child = cmd.spawn()
         .map_err(|e| {
             let err_msg = format!("无法执行 whisper-cli: {}。请确保工具已正确安装。", e);
             eprintln!("{}", err_msg);
             err_msg
         })?;
     
-    // 打印 whisper-cli 的输出
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    eprintln!("whisper-cli stdout: {}", stdout);
-    eprintln!("whisper-cli stderr: {}", stderr);
-    eprintln!("whisper-cli 退出码: {:?}", output.status.code());
+    // 获取 stdout 和 stderr 的句柄
+    let stdout = child.stdout.take()
+        .ok_or("无法获取 stdout 句柄")?;
+    let stderr = child.stderr.take()
+        .ok_or("无法获取 stderr 句柄")?;
     
-    if !output.status.success() {
-        let error_msg = if !stderr.is_empty() {
-            stderr.to_string()
-        } else if !stdout.is_empty() {
-            stdout.to_string()
+    // 创建事件名称
+    // 如果提供了 event_id，使用独立的事件名（transcription-stdout-{event_id} 和 transcription-stderr-{event_id}）
+    // 否则使用旧的事件名（transcription-log-{task_id}）以保持向后兼容
+    let (stdout_event_name, stderr_event_name) = if let Some(eid) = event_id {
+        (
+            format!("transcription-stdout-{}", eid),
+            format!("transcription-stderr-{}", eid),
+        )
+    } else {
+        let log_event_name = format!("transcription-log-{}", task_id);
+        (log_event_name.clone(), log_event_name)
+    };
+    
+    // 使用辅助函数并发读取 stdout 和 stderr，实时发送事件
+    let stdout_handle = spawn_stream_reader(
+        stdout,
+        app.clone(),
+        stdout_event_name,
+        "stdout",
+        true, // 启用调试日志
+    );
+    
+    let stderr_handle = spawn_stream_reader(
+        stderr,
+        app.clone(),
+        stderr_event_name,
+        "stderr",
+        true, // 启用调试日志
+    );
+    
+    // 等待进程完成
+    let status = child.wait().await
+        .map_err(|e| format!("等待进程完成失败: {}", e))?;
+    
+    // 获取 stdout 和 stderr 的输出
+    let stdout_output = stdout_handle.await
+        .map_err(|e| format!("读取 stdout 失败: {}", e))?;
+    let stderr_output = stderr_handle.await
+        .map_err(|e| format!("读取 stderr 失败: {}", e))?;
+    
+    // 合并日志
+    let mut log_buffer = String::new();
+    if !stdout_output.is_empty() {
+        log_buffer.push_str("=== STDOUT ===\n");
+        log_buffer.push_str(&stdout_output);
+    }
+    if !stderr_output.is_empty() {
+        if !log_buffer.is_empty() {
+            log_buffer.push('\n');
+        }
+        log_buffer.push_str("=== STDERR ===\n");
+        log_buffer.push_str(&stderr_output);
+    }
+    
+    // 保存日志到任务
+    task.log = Some(log_buffer);
+    
+    eprintln!("whisper-cli stdout: {}", stdout_output);
+    eprintln!("whisper-cli stderr: {}", stderr_output);
+    eprintln!("whisper-cli 退出码: {:?}", status.code());
+    
+    if !status.success() {
+        let error_msg = if !stderr_output.is_empty() {
+            stderr_output.trim().to_string()
+        } else if !stdout_output.is_empty() {
+            stdout_output.trim().to_string()
         } else {
-            format!("whisper-cli 执行失败，退出码: {:?}", output.status.code())
+            format!("whisper-cli 执行失败，退出码: {:?}", status.code())
         };
         
         eprintln!("转写失败: {}", error_msg);
@@ -373,6 +477,7 @@ async fn execute_transcription_task(
     task.status = "completed".to_string();
     task.completed_at = Some(Utc::now().to_rfc3339());
     task.result = Some(output_file.to_string_lossy().to_string());
+    // log 已经在上面保存了
     
     let task_json = serde_json::to_string_pretty(&task)
         .map_err(|e| format!("无法序列化任务: {}", e))?;
@@ -769,6 +874,94 @@ async fn download_model(
     Ok(format!("模型 {} 下载成功", model_name))
 }
 
+// 命令执行结果
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CommandExecutionResult {
+    pub exit_code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+    pub success: bool,
+}
+
+// 执行命令（通用）
+#[tauri::command]
+async fn execute_command(
+    command: String,
+    args: Vec<String>,
+    event_id: String,
+    working_dir: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<CommandExecutionResult, String> {
+    // 构建命令
+    let mut cmd = tokio::process::Command::new(&command);
+    
+    // 添加参数
+    for arg in args {
+        cmd.arg(arg);
+    }
+    
+    // 设置工作目录（如果提供）
+    if let Some(dir) = working_dir {
+        cmd.current_dir(dir);
+    }
+    
+    // 设置 stdout 和 stderr 为管道，以便实时读取
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    
+    // 启动进程
+    let mut child = cmd.spawn()
+        .map_err(|e| format!("无法执行命令 {}: {}", command, e))?;
+    
+    // 获取 stdout 和 stderr 的句柄
+    let stdout = child.stdout.take()
+        .ok_or("无法获取 stdout 句柄")?;
+    let stderr = child.stderr.take()
+        .ok_or("无法获取 stderr 句柄")?;
+    
+    // 创建事件名称
+    let stdout_event_name = format!("cmd-stdout-{}", event_id);
+    let stderr_event_name = format!("cmd-stderr-{}", event_id);
+    
+    // 使用辅助函数并发读取 stdout 和 stderr，实时发送事件
+    let stdout_handle = spawn_stream_reader(
+        stdout,
+        app.clone(),
+        stdout_event_name,
+        "stdout",
+        true, // 启用调试日志
+    );
+    
+    let stderr_handle = spawn_stream_reader(
+        stderr,
+        app.clone(),
+        stderr_event_name,
+        "stderr",
+        true, // 启用调试日志
+    );
+    
+    // 等待进程完成
+    let status = child.wait().await
+        .map_err(|e| format!("等待进程完成失败: {}", e))?;
+    
+    // 获取 stdout 和 stderr 的输出
+    let stdout_output = stdout_handle.await
+        .map_err(|e| format!("读取 stdout 失败: {}", e))?;
+    let stderr_output = stderr_handle.await
+        .map_err(|e| format!("读取 stderr 失败: {}", e))?;
+    
+    // 获取退出码
+    let exit_code = status.code();
+    let success = status.success();
+    
+    Ok(CommandExecutionResult {
+        exit_code,
+        stdout: stdout_output,
+        stderr: stderr_output,
+        success,
+    })
+}
+
 // 检查文件是否存在
 #[tauri::command]
 async fn check_file_exists(file_path: String) -> Result<bool, String> {
@@ -797,6 +990,7 @@ pub fn run() {
             get_models_dir,
             get_downloaded_models,
             download_model,
+            execute_command,
             check_file_exists,
         ])
         .run(tauri::generate_context!())
