@@ -11,7 +11,7 @@ export interface MenuItem {
 
 export interface FeaturePageMap {
   [feature: string]: {
-    [page: string]: React.ComponentType;
+    [page: string]: React.ComponentType | ((resourceId: string) => React.ComponentType);
   };
 }
 

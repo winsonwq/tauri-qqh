@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
-import { useAppDispatch } from '../redux/hooks';
-import { setCurrentPage } from '../redux/slices/featureKeysSlice';
-import { TranscriptionResource } from '../models';
+import { useAppDispatch } from '../../redux/hooks';
+import { setCurrentPage } from '../../redux/slices/featureKeysSlice';
+import { TranscriptionResource } from '../../models';
 import { HiPlus, HiDocumentText } from 'react-icons/hi2';
+import ResourceCard from './components/ResourceCard';
 
 const HomePage = () => {
   const dispatch = useAppDispatch();
@@ -145,29 +146,11 @@ const HomePage = () => {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {resources.map((resource) => (
-            <div
+            <ResourceCard
               key={resource.id}
-              className="card bg-base-100 shadow-lg hover:shadow-xl transition-shadow cursor-pointer"
-              onClick={() => handleResourceClick(resource.id)}
-            >
-              <div className="card-body">
-                <div className="flex items-start justify-between mb-2">
-                  <div className="flex-1 min-w-0">
-                    <h3 className="card-title text-base truncate" title={resource.name}>
-                      {resource.name}
-                    </h3>
-                  </div>
-                </div>
-
-                <div className="text-xs text-base-content/50 mb-4 line-clamp-2" title={resource.file_path}>
-                  {resource.file_path}
-                </div>
-
-                <div className="text-xs text-base-content/50 mb-4">
-                  创建时间: {new Date(resource.created_at).toLocaleString('zh-CN')}
-                </div>
-              </div>
-            </div>
+              resource={resource}
+              onClick={handleResourceClick}
+            />
           ))}
         </div>
       )}

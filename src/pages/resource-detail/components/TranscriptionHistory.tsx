@@ -47,16 +47,6 @@ const TranscriptionHistory = ({
     ? (logs[selectedTaskId] || []).filter(log => log.trim()).join('\n') 
     : '';
   
-  // 调试：打印日志状态
-  useEffect(() => {
-    if (selectedTaskId) {
-      console.log('TranscriptionHistory - selectedTaskId:', selectedTaskId);
-      console.log('TranscriptionHistory - logs for task:', logs[selectedTaskId]);
-      console.log('TranscriptionHistory - realtimeLog length:', realtimeLog.length);
-      console.log('TranscriptionHistory - realtimeLog preview:', realtimeLog.substring(0, 100));
-    }
-  }, [selectedTaskId, logs, realtimeLog]);
-
   const selectedTask = selectedTaskId ? tasks.find(t => t.id === selectedTaskId) : null;
   
   // 调试：打印任务状态
