@@ -1,6 +1,7 @@
 import { TranscriptionResource } from '../../../models'
 import { HiFolder, HiClock } from 'react-icons/hi2'
 import Tooltip from '../../../componets/Tooltip'
+import { formatDateTime } from '../../../utils/format'
 
 interface ResourceCardProps {
   resource: TranscriptionResource
@@ -34,7 +35,7 @@ const ResourceCard = ({ resource, onClick }: ResourceCardProps) => {
 
           <div className="text-xs text-base-content/50 flex items-center gap-1">
             <HiClock className="w-3 h-3 flex-shrink-0" />
-            <span>{new Date(resource.created_at).toLocaleString('zh-CN')}</span>
+            <span>{formatDateTime(resource.created_at)}</span>
           </div>
         </div>
       </div>

@@ -21,3 +21,12 @@ export const formatSubtitleTime = (timeStr: string) => {
   return time.format('HH:mm:ss')
 }
 
+/**
+ * 格式化日期时间为中文本地化字符串
+ * @param date 日期字符串或 Date 对象
+ * @returns 格式化后的日期时间字符串（中文格式）
+ */
+export const formatDateTime = (date: string | Date): string => {
+  return dayjs(date).format('YYYY-MM-DD HH:mm:ss')
+}
+
