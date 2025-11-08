@@ -1,36 +1,45 @@
-import { TranscriptionResource } from '../../../models';
+import { TranscriptionResource } from '../../../models'
+import { HiFolder, HiClock } from 'react-icons/hi2'
+import Tooltip from '../../../componets/Tooltip'
 
 interface ResourceCardProps {
-  resource: TranscriptionResource;
-  onClick: (resourceId: string) => void;
+  resource: TranscriptionResource
+  onClick: (resourceId: string) => void
 }
 
 const ResourceCard = ({ resource, onClick }: ResourceCardProps) => {
   return (
     <div
-      className="card bg-base-100 shadow-lg hover:shadow-xl transition-shadow cursor-pointer"
+      className="card card-border bg-base-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer"
       onClick={() => onClick(resource.id)}
     >
-      <div className="card-body">
-        <div className="flex items-start justify-between mb-2">
-          <div className="flex-1 min-w-0">
-            <h3 className="card-title text-base truncate" title={resource.name}>
-              {resource.name}
-            </h3>
+      <div className="card-body flex flex-col">
+        <div className="flex items-start justify-between mb-4">
+          <h3 className="card-title text-base" title={resource.name}>
+            {resource.name}
+          </h3>
+        </div>
+
+        <div className="mt-auto space-y-2">
+          <Tooltip
+            content={resource.file_path}
+            className='w-full'
+            contentClassName="p-4 font-mono text-xs"
+          >
+            <div className="text-xs text-base-content/50 flex items-center gap-1">
+              <HiFolder className="w-3 h-3 flex-shrink-0" />
+              <span className="truncate">{resource.file_path}</span>
+            </div>
+          </Tooltip>
+
+          <div className="text-xs text-base-content/50 flex items-center gap-1">
+            <HiClock className="w-3 h-3 flex-shrink-0" />
+            <span>{new Date(resource.created_at).toLocaleString('zh-CN')}</span>
           </div>
-        </div>
-
-        <div className="text-xs text-base-content/50 mb-4 line-clamp-2" title={resource.file_path}>
-          {resource.file_path}
-        </div>
-
-        <div className="text-xs text-base-content/50 mb-4">
-          创建时间: {new Date(resource.created_at).toLocaleString('zh-CN')}
         </div>
       </div>
     </div>
-  );
-};
+  )
+}
 
-export default ResourceCard;
-
+export default ResourceCard

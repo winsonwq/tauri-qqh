@@ -8,7 +8,7 @@ const AppContent = () => {
   const renderPage = () => {
     if (!currentFeature) {
       return (
-        <div className="card bg-base-100">
+        <div className="card">
           <div className="card-body">
             <h2 className="card-title">欢迎使用</h2>
             <p>请从侧边栏选择一个功能</p>
@@ -20,7 +20,7 @@ const AppContent = () => {
     const featurePages = featurePageMap[currentFeature];
     if (!featurePages) {
       return (
-        <div className="card bg-base-100">
+        <div className="card">
           <div className="card-body">
             <h2 className="card-title">页面未找到</h2>
             <p>功能 {currentFeature} 的页面配置不存在</p>
@@ -50,7 +50,7 @@ const AppContent = () => {
 
     if (!PageComponent) {
       return (
-        <div className="card bg-base-100">
+        <div className="card">
           <div className="card-body">
             <h2 className="card-title">页面未找到</h2>
             <p>
@@ -65,11 +65,8 @@ const AppContent = () => {
     return <PageComponent />;
   };
 
-  // 判断是否是详情页面（详情页面需要自己控制 padding）
-  const isDetailPage = currentPage && currentPage.startsWith('resource:');
-
   return (
-    <main className={`flex-1 bg-base-200 overflow-auto ${isDetailPage ? '' : 'p-6'}`}>
+    <main className={`flex-1 bg-base-100 overflow-auto`}>
       {renderPage()}
     </main>
   );

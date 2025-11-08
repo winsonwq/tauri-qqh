@@ -15,7 +15,7 @@ export interface FeaturePageMap {
   };
 }
 
-import { FaHome, FaCog, FaSlidersH, FaCogs } from 'react-icons/fa';
+import { FaHome, FaCog } from 'react-icons/fa';
 
 // Menu 配置
 export const menuConfig: MenuItem[] = [
@@ -30,22 +30,7 @@ export const menuConfig: MenuItem[] = [
     label: '设置',
     icon: FaCog,
     feature: 'settings',
-    children: [
-      {
-        key: 'settings-general',
-        label: '通用设置',
-        icon: FaSlidersH,
-        feature: 'settings',
-        page: 'general',
-      },
-      {
-        key: 'settings-advanced',
-        label: '高级设置',
-        icon: FaCogs,
-        feature: 'settings',
-        page: 'advanced',
-      },
-    ],
+    page: 'general',
   },
 ];
 

@@ -10,3 +10,8 @@ body,
   padding: 0;
   overflow: hidden;
 }
+
+/* Plyr 播放器样式定制 */
+.plyr {
+  border-radius: 0.5rem;
+}

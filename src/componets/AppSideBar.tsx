@@ -3,7 +3,7 @@ import { useAppDispatch, useAppSelector } from '../redux/hooks';
 import { setCurrentFeature, setCurrentPage } from '../redux/slices/featureKeysSlice';
 import { toggleTheme } from '../redux/slices/themeSlice';
 import { menuConfig, MenuItem } from '../config/menuConfig';
-import { FaMoon, FaSun } from 'react-icons/fa';
+import { FaMoon, FaSun, FaRobot } from 'react-icons/fa';
 
 interface AppSideBarProps {
   sidebarOpen: boolean;
@@ -122,13 +122,13 @@ const AppSideBar = ({ sidebarOpen, onToggleSidebar }: AppSideBarProps) => {
               {item.label}
             </summary>
             <ul>
-              {item.children.map((child) => {
+              {item.children?.map((child) => {
                 const ChildIconComponent = child.icon;
                 const childActive = isActive(child);
-                const childLinkClassName = childActive ? 'active' : '';
+                const childLinkClassName = childActive ? 'menu-active' : '';
                 return (
                   <li key={child.key}>
-                    <a
+                    <button
                       className={childLinkClassName || undefined}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -136,8 +136,7 @@ const AppSideBar = ({ sidebarOpen, onToggleSidebar }: AppSideBarProps) => {
                       }}
                     >
                       {ChildIconComponent && <ChildIconComponent className="h-3.5 w-3.5" />}
-                      {child.label}
-                    </a>
+                    </button>
                   </li>
                 );
               })}
@@ -147,20 +146,18 @@ const AppSideBar = ({ sidebarOpen, onToggleSidebar }: AppSideBarProps) => {
       );
     }
 
-    // 构建类名，确保 active 类正确应用
-    const linkClassName = active ? 'active' : '';
+    // 构建类名，确保 menu-active 类正确应用（按照 DaisyUI 规范）
+    const linkClassName = active ? 'menu-active' : '';
     
     return (
       <li key={item.key}>
-        <a
+        <button
           className={linkClassName || undefined}
           onClick={() => handleMenuClick(item)}
-          role="button"
-          tabIndex={0}
         >
           {IconComponent && <IconComponent className="h-3.5 w-3.5" />}
           {item.label}
-        </a>
+        </button>
       </li>
     );
   };
@@ -174,14 +171,15 @@ const AppSideBar = ({ sidebarOpen, onToggleSidebar }: AppSideBarProps) => {
       ></label>
       <aside className="w-64 h-full bg-base-200 relative overflow-y-auto">
         {/* Logo 区域 */}
-        <div className="flex items-center justify-center h-20 border-b border-base-300">
-          <div className="w-32 h-12 bg-base-300 rounded flex items-center justify-center">
-            {/* Logo 占位区域 */}
+        <div className="flex items-center justify-start h-20 border-b border-base-300 px-4">
+          <div className="flex items-center gap-3">
+            <FaRobot className="h-8 w-8 text-black" />
+            <span className="text-xl font-bold text-black">FlashWhisper AI</span>
           </div>
         </div>
 
         {/* Menu 区域 */}
-        <ul className="menu p-4 w-full">
+        <ul className="menu p-4 w-full space-y-2">
           {menuConfig.map((item) => renderMenuItem(item))}
         </ul>
 

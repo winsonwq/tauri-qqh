@@ -144,257 +144,255 @@ const TranscriptionHistory = ({
   }
 
   return (
-    <div className="card bg-base-100 h-full flex flex-col">
-      <div className="card-body flex flex-col h-full overflow-hidden">
-        {/* 上部分：转写记录 */}
-        <div className="flex-shrink-0">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="card-title text-lg">转写记录</h2>
-            <button
-              className="btn btn-primary btn-sm"
-              onClick={onCreateTask}
-            >
-              创建转写任务
-            </button>
-          </div>
-
-          {tasks.length === 0 ? (
-            <div className="text-center py-8 text-base-content/50">
-              <HiDocumentText className="w-12 h-12 mx-auto mb-4 opacity-50" />
-              <p>暂无转写任务</p>
-              <p className="text-sm mt-2">点击上方按钮创建转写任务</p>
-            </div>
-          ) : (
-            <select
-              className="select select-bordered select-sm w-full"
-              value={selectedTaskId || ''}
-              onChange={(e) => onSelectTask(e.target.value || null)}
-            >
-              <option value="" disabled>请选择...</option>
-              {sortedTasks.map((task) => (
-                <option key={task.id} value={task.id}>
-                  {new Date(task.created_at).toLocaleString('zh-CN')} - {getStatusText(task.status)}
-                  {task.status === TranscriptionTaskStatus.COMPLETED ? ' ✓' : ''}
-                </option>
-              ))}
-            </select>
-          )}
+    <div className="h-full flex flex-col p-6 overflow-hidden">
+      {/* 上部分：转写记录 */}
+      <div className="flex-shrink-0">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold">转写记录</h2>
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={onCreateTask}
+          >
+            创建转写任务
+          </button>
         </div>
 
-        {/* 下部分：转写结果/日志展示 */}
-        {selectedTask && (
-          <div className="flex-1 flex flex-col min-h-0 mt-4 border-base-300">
-            {/* 切换按钮 */}
-            <div className="flex items-center justify-between mb-3 flex-shrink-0">
-              <div className="flex items-center gap-2">
-                <h3 className="text-lg font-semibold">
-                  {viewMode === 'result' ? '转写结果' : '运行日志'}
-                </h3>
-                {/* 如果任务正在运行，在标题旁边显示停止按钮 */}
-                {selectedTask && selectedTask.status === TranscriptionTaskStatus.RUNNING && (
-                  <button
-                    className="btn btn-warning btn-sm"
-                    onClick={handleStopTask}
-                    title="停止任务"
-                  >
-                    <HiStop className="w-4 h-4 mr-1" />
-                    停止
-                  </button>
-                )}
-                {viewMode === 'result' && jsonData && (
-                  <button
-                    className="btn btn-sm btn-ghost btn-circle"
-                    onClick={() => setShowInfoModal(true)}
-                    title="查看转写信息"
-                  >
-                    <HiInformationCircle className="w-5 h-5" />
-                  </button>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                {/* 切换按钮组 */}
-                {(selectedTask.status === TranscriptionTaskStatus.COMPLETED || 
-                  selectedTask.status === TranscriptionTaskStatus.RUNNING ||
-                  selectedTask.status === TranscriptionTaskStatus.PENDING ||
-                  selectedTask.status === TranscriptionTaskStatus.FAILED) && (
-                  <div className="join">
-                    {selectedTask.status === TranscriptionTaskStatus.COMPLETED && (
-                      <button
-                        className={`join-item btn btn-sm ${viewMode === 'result' ? 'btn-active' : ''}`}
-                        onClick={() => setViewMode('result')}
-                      >
-                        转写结果
-                      </button>
-                    )}
-                    <button
-                      className={`join-item btn btn-sm ${viewMode === 'log' ? 'btn-active' : ''}`}
-                      onClick={() => setViewMode('log')}
-                    >
-                      运行日志
-                    </button>
-                  </div>
-                )}
-                {/* 删除按钮 */}
-                {selectedTask.status !== TranscriptionTaskStatus.RUNNING && 
-                 selectedTask.status !== TranscriptionTaskStatus.PENDING && (
-                  <button
-                    className="btn btn-sm btn-error btn-ghost"
-                    onClick={() => setShowDeleteModal(true)}
-                    title="删除任务"
-                  >
-                    <HiTrash className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
-            </div>
+        {tasks.length === 0 ? (
+          <div className="text-center py-8 text-base-content/50">
+            <HiDocumentText className="w-12 h-12 mx-auto mb-4 opacity-50" />
+            <p>暂无转写任务</p>
+            <p className="text-sm mt-2">点击上方按钮创建转写任务</p>
+          </div>
+        ) : (
+          <select
+            className="select select-bordered select-sm w-full"
+            value={selectedTaskId || ''}
+            onChange={(e) => onSelectTask(e.target.value || null)}
+          >
+            <option value="" disabled>请选择...</option>
+            {sortedTasks.map((task) => (
+              <option key={task.id} value={task.id}>
+                {new Date(task.created_at).toLocaleString('zh-CN')} - {getStatusText(task.status)}
+                {task.status === TranscriptionTaskStatus.COMPLETED ? ' ✓' : ''}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
 
-            {/* 内容区域 */}
-            <div className="flex-1 overflow-auto min-h-0">
-              {/* 如果任务正在运行或待处理，强制显示日志视图 */}
-              {(viewMode === 'result' && 
-                (selectedTask.status === TranscriptionTaskStatus.RUNNING || 
-                 selectedTask.status === TranscriptionTaskStatus.PENDING)) ? (
-                // 运行中或待处理的任务即使选择了结果视图，也显示日志
-                <div className="bg-base-200 rounded-lg border border-base-300 p-4">
-                  <div className="text-sm text-base-content font-mono whitespace-pre-wrap break-words max-h-full overflow-auto">
-                    {/* 显示保存的日志 */}
-                    {selectedTask.log && (
-                      <div className="mb-2">
-                        {selectedTask.log}
-                      </div>
-                    )}
-                    {/* 显示实时日志 */}
-                    {realtimeLog && (
-                      <div className={selectedTask.log ? 'mt-2 pt-2 border-t border-base-300' : ''}>
-                        <div className="text-xs text-base-content/70 mb-1">实时日志:</div>
-                        {realtimeLog}
-                      </div>
-                    )}
-                    {/* 如果没有日志 */}
-                    {!selectedTask.log && !realtimeLog && (
-                      <div className="text-base-content/50">
-                        等待日志输出...
-                      </div>
-                    )}
-                    <div ref={logEndRef} />
-                  </div>
-                </div>
-              ) : viewMode === 'result' ? (
-                // 显示转写结果
-                selectedTask.status === TranscriptionTaskStatus.COMPLETED ? (
-                  resultContent !== null ? (
-                    resultContent ? (
-                      jsonData ? (
-                        // 显示 JSON 格式的结果
-                        <div className="space-y-2">
-                          <TranscriptionJsonView data={jsonData} />
-                        </div>
-                      ) : (
-                        // 显示文本格式的结果（兼容旧格式）
-                        <div className="bg-base-200 rounded-lg border border-base-300 p-4">
-                          <div className="text-sm text-base-content whitespace-pre-wrap break-words">
-                            {resultContent}
-                          </div>
-                        </div>
-                      )
-                    ) : (
-                      <div className="text-center py-8 text-base-content/50">
-                        <span className="loading loading-spinner loading-md"></span>
-                        <p className="mt-2 text-sm">加载中...</p>
-                      </div>
-                    )
-                  ) : null
-                ) : (
-                  // 如果任务失败，也显示日志
-                  selectedTask.status === TranscriptionTaskStatus.FAILED ? (
-                    <div className="bg-base-200 rounded-lg border border-base-300 p-4">
-                      <div className="text-sm text-base-content font-mono whitespace-pre-wrap break-words max-h-full overflow-auto">
-                        {selectedTask.error && (
-                          <div className="text-error mb-2">
-                            <div className="font-semibold">错误信息:</div>
-                            {selectedTask.error}
-                          </div>
-                        )}
-                        {selectedTask.log && (
-                          <div className={selectedTask.error ? 'mt-2 pt-2 border-t border-base-300' : ''}>
-                            {selectedTask.log}
-                          </div>
-                        )}
-                        {realtimeLog && (
-                          <div className={(selectedTask.log || selectedTask.error) ? 'mt-2 pt-2 border-t border-base-300' : ''}>
-                            <div className="text-xs text-base-content/70 mb-1">实时日志:</div>
-                            {realtimeLog}
-                          </div>
-                        )}
-                        {!selectedTask.error && !selectedTask.log && !realtimeLog && (
-                          <div className="text-base-content/50">
-                            暂无日志
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-center py-8 text-base-content/50">
-                      <p>转写尚未完成</p>
-                    </div>
-                  )
-                )
-              ) : (
-                // 显示运行日志
-                <div className="bg-base-200 rounded-lg border border-base-300 p-4">
-                  <div className="text-sm text-base-content font-mono whitespace-pre-wrap break-words max-h-full overflow-auto">
-                    {/* 显示保存的日志 */}
-                    {selectedTask.log && (
-                      <div className="mb-2">
-                        {selectedTask.log}
-                      </div>
-                    )}
-                    {/* 显示实时日志 */}
-                    {realtimeLog && (
-                      <div className={selectedTask.log ? 'mt-2 pt-2 border-t border-base-300' : ''}>
-                        <div className="text-xs text-base-content/70 mb-1">实时日志:</div>
-                        {realtimeLog}
-                      </div>
-                    )}
-                    {/* 如果没有日志 */}
-                    {!selectedTask.log && !realtimeLog && (
-                      <div className="text-base-content/50">
-                        {selectedTask.status === TranscriptionTaskStatus.RUNNING
-                          ? '等待日志输出...'
-                          : '暂无日志'}
-                      </div>
-                    )}
-                    <div ref={logEndRef} />
-                  </div>
-                </div>
+      {/* 下部分：转写结果/日志展示 */}
+      {selectedTask && (
+        <div className="flex-1 flex flex-col min-h-0 mt-4 border-base-300">
+          {/* 切换按钮 */}
+          <div className="flex items-center justify-between mb-3 flex-shrink-0">
+            <div className="flex items-center gap-2">
+              <h3 className="text-lg font-semibold">
+                {viewMode === 'result' ? '转写结果' : '运行日志'}
+              </h3>
+              {/* 如果任务正在运行，在标题旁边显示停止按钮 */}
+              {selectedTask && selectedTask.status === TranscriptionTaskStatus.RUNNING && (
+                <button
+                  className="btn btn-warning btn-sm"
+                  onClick={handleStopTask}
+                  title="停止任务"
+                >
+                  <HiStop className="w-4 h-4 mr-1" />
+                  停止
+                </button>
+              )}
+              {viewMode === 'result' && jsonData && (
+                <button
+                  className="btn btn-sm btn-ghost btn-circle"
+                  onClick={() => setShowInfoModal(true)}
+                  title="查看转写信息"
+                >
+                  <HiInformationCircle className="w-5 h-5" />
+                </button>
               )}
             </div>
+            <div className="flex items-center gap-2">
+              {/* 切换按钮组 */}
+              {(selectedTask.status === TranscriptionTaskStatus.COMPLETED || 
+                selectedTask.status === TranscriptionTaskStatus.RUNNING ||
+                selectedTask.status === TranscriptionTaskStatus.PENDING ||
+                selectedTask.status === TranscriptionTaskStatus.FAILED) && (
+                <div className="join">
+                  {selectedTask.status === TranscriptionTaskStatus.COMPLETED && (
+                    <button
+                      className={`join-item btn btn-sm ${viewMode === 'result' ? 'btn-active' : ''}`}
+                      onClick={() => setViewMode('result')}
+                    >
+                      转写结果
+                    </button>
+                  )}
+                  <button
+                    className={`join-item btn btn-sm ${viewMode === 'log' ? 'btn-active' : ''}`}
+                    onClick={() => setViewMode('log')}
+                  >
+                    运行日志
+                  </button>
+                </div>
+              )}
+              {/* 删除按钮 */}
+              {selectedTask.status !== TranscriptionTaskStatus.RUNNING && 
+               selectedTask.status !== TranscriptionTaskStatus.PENDING && (
+                <button
+                  className="btn btn-sm btn-error btn-ghost"
+                  onClick={() => setShowDeleteModal(true)}
+                  title="删除任务"
+                >
+                  <HiTrash className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          </div>
 
-            {/* 底部信息 */}
-            {viewMode === 'result' && jsonData && jsonData.transcription && jsonData.transcription.length > 0 && (
-              <div className="flex-shrink-0 pt-3 text-xs text-base-content/50">
-                共 {jsonData.transcription.length} 个片段
+          {/* 内容区域 */}
+          <div className="flex-1 overflow-auto min-h-0">
+            {/* 如果任务正在运行或待处理，强制显示日志视图 */}
+            {(viewMode === 'result' && 
+              (selectedTask.status === TranscriptionTaskStatus.RUNNING || 
+               selectedTask.status === TranscriptionTaskStatus.PENDING)) ? (
+              // 运行中或待处理的任务即使选择了结果视图，也显示日志
+              <div className="bg-base-200 rounded-lg border border-base-300 p-4">
+                <div className="text-sm text-base-content font-mono whitespace-pre-wrap break-words max-h-full overflow-auto">
+                  {/* 显示保存的日志 */}
+                  {selectedTask.log && (
+                    <div className="mb-2">
+                      {selectedTask.log}
+                    </div>
+                  )}
+                  {/* 显示实时日志 */}
+                  {realtimeLog && (
+                    <div className={selectedTask.log ? 'mt-2 pt-2 border-t border-base-300' : ''}>
+                      <div className="text-xs text-base-content/70 mb-1">实时日志:</div>
+                      {realtimeLog}
+                    </div>
+                  )}
+                  {/* 如果没有日志 */}
+                  {!selectedTask.log && !realtimeLog && (
+                    <div className="text-base-content/50">
+                      等待日志输出...
+                    </div>
+                  )}
+                  <div ref={logEndRef} />
+                </div>
+              </div>
+            ) : viewMode === 'result' ? (
+              // 显示转写结果
+              selectedTask.status === TranscriptionTaskStatus.COMPLETED ? (
+                resultContent !== null ? (
+                  resultContent ? (
+                    jsonData ? (
+                      // 显示 JSON 格式的结果
+                      <div className="space-y-2">
+                        <TranscriptionJsonView data={jsonData} />
+                      </div>
+                    ) : (
+                      // 显示文本格式的结果（兼容旧格式）
+                      <div className="bg-base-200 rounded-lg border border-base-300 p-4">
+                        <div className="text-sm text-base-content whitespace-pre-wrap break-words">
+                          {resultContent}
+                        </div>
+                      </div>
+                    )
+                  ) : (
+                    <div className="text-center py-8 text-base-content/50">
+                      <span className="loading loading-spinner loading-md"></span>
+                      <p className="mt-2 text-sm">加载中...</p>
+                    </div>
+                  )
+                ) : null
+              ) : (
+                // 如果任务失败，也显示日志
+                selectedTask.status === TranscriptionTaskStatus.FAILED ? (
+                  <div className="bg-base-200 rounded-lg border border-base-300 p-4">
+                    <div className="text-sm text-base-content font-mono whitespace-pre-wrap break-words max-h-full overflow-auto">
+                      {selectedTask.error && (
+                        <div className="text-error mb-2">
+                          <div className="font-semibold">错误信息:</div>
+                          {selectedTask.error}
+                        </div>
+                      )}
+                      {selectedTask.log && (
+                        <div className={selectedTask.error ? 'mt-2 pt-2 border-t border-base-300' : ''}>
+                          {selectedTask.log}
+                        </div>
+                      )}
+                      {realtimeLog && (
+                        <div className={(selectedTask.log || selectedTask.error) ? 'mt-2 pt-2 border-t border-base-300' : ''}>
+                          <div className="text-xs text-base-content/70 mb-1">实时日志:</div>
+                          {realtimeLog}
+                        </div>
+                      )}
+                      {!selectedTask.error && !selectedTask.log && !realtimeLog && (
+                        <div className="text-base-content/50">
+                          暂无日志
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-base-content/50">
+                    <p>转写尚未完成</p>
+                  </div>
+                )
+              )
+            ) : (
+              // 显示运行日志
+              <div className="bg-base-200 rounded-lg border border-base-300 p-4">
+                <div className="text-sm text-base-content font-mono whitespace-pre-wrap break-words max-h-full overflow-auto">
+                  {/* 显示保存的日志 */}
+                  {selectedTask.log && (
+                    <div className="mb-2">
+                      {selectedTask.log}
+                    </div>
+                  )}
+                  {/* 显示实时日志 */}
+                  {realtimeLog && (
+                    <div className={selectedTask.log ? 'mt-2 pt-2 border-t border-base-300' : ''}>
+                      <div className="text-xs text-base-content/70 mb-1">实时日志:</div>
+                      {realtimeLog}
+                    </div>
+                  )}
+                  {/* 如果没有日志 */}
+                  {!selectedTask.log && !realtimeLog && (
+                    <div className="text-base-content/50">
+                      {selectedTask.status === TranscriptionTaskStatus.RUNNING
+                        ? '等待日志输出...'
+                        : '暂无日志'}
+                    </div>
+                  )}
+                  <div ref={logEndRef} />
+                </div>
               </div>
             )}
           </div>
-        )}
 
-        {/* 转写信息弹出框 */}
-        <TranscriptionInfoModal
-          isOpen={showInfoModal}
-          data={jsonData}
-          onClose={() => setShowInfoModal(false)}
-        />
+          {/* 底部信息 */}
+          {viewMode === 'result' && jsonData && jsonData.transcription && jsonData.transcription.length > 0 && (
+            <div className="flex-shrink-0 pt-3 text-xs text-base-content/50">
+              共 {jsonData.transcription.length} 个片段
+            </div>
+          )}
+        </div>
+      )}
 
-        {/* 删除确认弹窗 */}
-        <DeleteConfirmModal
-          isOpen={showDeleteModal}
-          title="删除转写任务"
-          message="确定要删除这个转写任务吗？删除后无法恢复。"
-          onConfirm={handleDeleteTask}
-          onCancel={() => setShowDeleteModal(false)}
-        />
-      </div>
+      {/* 转写信息弹出框 */}
+      <TranscriptionInfoModal
+        isOpen={showInfoModal}
+        data={jsonData}
+        onClose={() => setShowInfoModal(false)}
+      />
+
+      {/* 删除确认弹窗 */}
+      <DeleteConfirmModal
+        isOpen={showDeleteModal}
+        title="删除转写任务"
+        message="确定要删除这个转写任务吗？删除后无法恢复。"
+        onConfirm={handleDeleteTask}
+        onCancel={() => setShowDeleteModal(false)}
+      />
     </div>
   );
 };

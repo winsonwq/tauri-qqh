@@ -83,12 +83,15 @@ const HomePage = () => {
         return;
       }
 
-      // 创建转写资源（不自动创建任务）
-      const resource = await invoke<TranscriptionResource>('create_transcription_resource', {
+      // 创建新的转写资源
+      const newResource = await invoke<TranscriptionResource>('create_transcription_resource', {
         name: fileName,
         filePath: filePath,
       });
 
+      // 创建成功后，跳转到资源详情页
+      dispatch(setCurrentPage({ feature: 'home', page: `resource:${newResource.id}` }));
+      
       // 重新加载资源列表
       await loadResources();
     } catch (err) {
@@ -106,9 +109,9 @@ const HomePage = () => {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="h-full p-6 space-y-6">
       {/* 操作区域 */}
-      <div className="card bg-base-100 shadow-lg">
+      <div className="card card-border bg-base-100 shadow-sm">
         <div className="card-body">
           <div className="flex items-center justify-between">
             <div>
@@ -134,7 +137,7 @@ const HomePage = () => {
 
       {/* 资源列表 */}
       {resources.length === 0 ? (
-        <div className="card bg-base-100 shadow-lg">
+        <div className="card card-border bg-base-100 shadow-sm">
           <div className="card-body">
             <div className="text-center py-12 text-base-content/50">
               <HiDocumentText className="w-16 h-16 mx-auto mb-4 opacity-50" />

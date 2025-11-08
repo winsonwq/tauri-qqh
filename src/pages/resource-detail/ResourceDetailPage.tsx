@@ -497,7 +497,7 @@ const ResourceDetailPage = () => {
 
       <div className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-hidden">
         {/* 左侧：资源信息和预览 */}
-        <div className="w-full lg:w-1/3 flex-shrink-0 lg:h-full overflow-auto p-6">
+        <div className="w-full lg:w-2/5 flex-shrink-0 lg:h-full overflow-auto border-r border-base-300 bg-base-100">
           <ResourceInfoCard
             resource={resource}
             audioSrc={audioSrc}
@@ -506,7 +506,7 @@ const ResourceDetailPage = () => {
         </div>
 
         {/* 右侧：转写记录和结果 */}
-        <div className="flex-1 lg:h-full overflow-hidden min-w-0 p-6">
+        <div className="flex-1 lg:h-full overflow-hidden min-w-0 bg-base-100">
           <TranscriptionHistory
             tasks={tasks}
             selectedTaskId={selectedTaskId}

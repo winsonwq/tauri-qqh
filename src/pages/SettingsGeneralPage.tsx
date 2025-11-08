@@ -65,9 +65,9 @@ const SettingsGeneralPage = () => {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 p-6 h-full">
       {/* 模型管理 */}
-      <div className="card bg-base-100 shadow-lg">
+      <div className="card card-border bg-base-100 shadow-sm">
         <div className="card-body">
           <h2 className="card-title">模型管理</h2>
           <p className="text-base-content/70">
