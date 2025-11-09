@@ -21,10 +21,10 @@
     "security": {
       "assetProtocol": {
         "enable": true,
-        "scope": ["**"] 
+        "scope": ["**"]
       },
-      
-      "csp": "default-src 'self'; media-src 'self' asset: https://asset.localhost;"
+
+      "csp": "default-src 'self'; media-src 'self' asset: https://asset.localhost asset://localhost;"
     }
   },
   "bundle": {
@@ -36,6 +36,10 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "entitlements": "./Entitlements.plist",
+      "minimumSystemVersion": "12.0"
+    }
   }
 }

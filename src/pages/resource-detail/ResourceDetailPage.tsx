@@ -529,6 +529,7 @@ const ResourceDetailPage = () => {
             tasks={tasks}
             selectedTaskId={selectedTaskId}
             resultContent={resultContent}
+            resourceName={resource?.name}
             onSelectTask={setSelectedTaskId}
             onCreateTask={handleShowCreateTaskModal}
             onTaskDeleted={loadTasks}

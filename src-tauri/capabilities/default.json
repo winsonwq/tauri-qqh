@@ -16,14 +16,31 @@
     },
     "dialog:allow-open",
     "dialog:allow-save",
-    "fs:allow-read-file",
-    "fs:allow-write-file",
+    {
+      "identifier": "fs:allow-write-file",
+      "allow": [
+        {
+          "path": "**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-write-text-file",
+      "allow": [
+        {
+          "path": "**"
+        }
+      ]
+    },
     "fs:allow-read-dir",
     "fs:allow-create",
     {
       "identifier": "fs:allow-exists",
       "allow": ["**"]
     },
-    "fs:scope-appdata"
+    {
+      "identifier": "fs:allow-read-file",
+      "allow": ["**"]
+    }
   ]
 }

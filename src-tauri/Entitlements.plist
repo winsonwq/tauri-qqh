@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <!-- 启用应用沙盒 -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+
+    <!-- 允许用户使用 NSOpenPanel (文件打开对话框) 选择文件，并授予读/写权限 -->
+    <!-- 用于：选择音频文件进行转写 -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+
+    <key>com.apple.security.files.downloads.read-write</key>
+    <true/>
+
+    <!-- 允许出站网络连接 -->
+    <!-- 用于：从 Hugging Face 下载 Whisper 模型文件 -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+
+    <!-- 允许执行未签名的可执行文件 -->
+    <!-- 用于：执行打包的 whisper-cli 工具 -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+
+    <!-- 允许加载未签名的动态库 -->
+    <!-- 用于：加载 whisper-cli 依赖的 dylib 库（libggml*.dylib, libwhisper*.dylib） -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+  </dict>
+</plist>

@@ -1,19 +1,24 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { save } from '@tauri-apps/plugin-dialog';
+import { writeTextFile } from '@tauri-apps/plugin-fs';
 import { useAppSelector, useAppDispatch } from '../../../redux/hooks';
 import { clearLogs } from '../../../redux/slices/transcriptionLogsSlice';
 import { TranscriptionTask, TranscriptionTaskStatus } from '../../../models';
 import { TranscriptionResultJson } from '../../../models/TranscriptionResult';
-import { HiDocumentText, HiInformationCircle, HiTrash, HiStop } from 'react-icons/hi2';
+import { HiDocumentText, HiInformationCircle, HiTrash, HiStop, HiArrowDownTray } from 'react-icons/hi2';
 import { getStatusText } from './transcriptionUtils';
 import TranscriptionJsonView from './TranscriptionJsonView';
 import TranscriptionInfoModal from './TranscriptionInfoModal';
 import DeleteConfirmModal from '../../../componets/DeleteConfirmModal';
+import { convertToSRT } from '../../../utils/srtConverter';
+import { useMessage } from '../../../componets/Toast';
 
 interface TranscriptionHistoryProps {
   tasks: TranscriptionTask[];
   selectedTaskId: string | null;
   resultContent: string | null;
+  resourceName?: string; // 资源名称，用于生成默认导出文件名
   onSelectTask: (taskId: string | null) => void;
   onCreateTask: () => void;
   onTaskDeleted?: () => void; // 任务删除后的回调
@@ -24,6 +29,7 @@ const TranscriptionHistory = ({
   tasks,
   selectedTaskId,
   resultContent,
+  resourceName,
   onSelectTask,
   onCreateTask,
   onTaskDeleted,
@@ -34,6 +40,7 @@ const TranscriptionHistory = ({
   }, [tasks]);
 
   const dispatch = useAppDispatch();
+  const message = useMessage();
   const [showInfoModal, setShowInfoModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [viewMode, setViewMode] = useState<'result' | 'log'>('result'); // 切换显示模式
@@ -97,6 +104,57 @@ const TranscriptionHistory = ({
     } catch (err) {
       // 静默处理错误，只记录到控制台，不显示全局提示
       console.error('停止任务失败:', err);
+    }
+  };
+
+  // 导出转写结果为SRT格式
+  const handleExportSRT = async () => {
+    if (!resultContent || !selectedTask) {
+      message.error('没有可导出的转写结果');
+      return;
+    }
+
+    // 尝试解析JSON数据
+    let jsonData: TranscriptionResultJson | null = null;
+    try {
+      jsonData = JSON.parse(resultContent) as TranscriptionResultJson;
+    } catch (e) {
+      message.error('转写结果格式不正确，无法导出');
+      return;
+    }
+
+    if (!jsonData || !jsonData.transcription || jsonData.transcription.length === 0) {
+      message.error('转写结果为空，无法导出');
+      return;
+    }
+
+    try {
+      const srtContent = convertToSRT(jsonData);
+
+      const nameWithoutExt = resourceName?.replace(/\.[^/.]+$/, '') || '';
+      const defaultFileName = `${nameWithoutExt}.srt`;
+
+      const filePath = await save({
+        filters: [
+          {
+            name: 'SRT字幕文件',
+            extensions: ['srt'],
+          },
+        ],
+        defaultPath: defaultFileName,
+      });
+
+      if (!filePath) {
+        // 用户取消了保存
+        return;
+      }
+
+      // 保存文件（writeTextFile 默认使用 UTF-8 编码）
+      await writeTextFile(filePath, srtContent);
+      message.success('SRT文件导出成功');
+    } catch (err) {
+      console.error('导出SRT失败:', err);
+      message.error(err instanceof Error ? err.message : '导出SRT文件失败');
     }
   };
 
@@ -211,6 +269,28 @@ const TranscriptionHistory = ({
               )}
             </div>
             <div className="flex items-center gap-2">
+              {/* 导出按钮 */}
+              {selectedTask.status === TranscriptionTaskStatus.COMPLETED && 
+               (jsonData?.transcription?.length ?? 0) > 0 && (
+                <button
+                  className="btn btn-sm btn-primary btn-ghost"
+                  onClick={handleExportSRT}
+                  title="导出为SRT格式"
+                >
+                  <HiArrowDownTray className="w-4 h-4" />
+                </button>
+              )}
+              {/* 删除按钮 */}
+              {selectedTask.status !== TranscriptionTaskStatus.RUNNING && 
+               selectedTask.status !== TranscriptionTaskStatus.PENDING && (
+                <button
+                  className="btn btn-sm btn-error btn-ghost"
+                  onClick={() => setShowDeleteModal(true)}
+                  title="删除任务"
+                >
+                  <HiTrash className="w-4 h-4" />
+                </button>
+              )}
               {/* 切换按钮组 */}
               {(selectedTask.status === TranscriptionTaskStatus.COMPLETED || 
                 selectedTask.status === TranscriptionTaskStatus.RUNNING ||
@@ -232,17 +312,6 @@ const TranscriptionHistory = ({
                     运行日志
                   </button>
                 </div>
-              )}
-              {/* 删除按钮 */}
-              {selectedTask.status !== TranscriptionTaskStatus.RUNNING && 
-               selectedTask.status !== TranscriptionTaskStatus.PENDING && (
-                <button
-                  className="btn btn-sm btn-error btn-ghost"
-                  onClick={() => setShowDeleteModal(true)}
-                  title="删除任务"
-                >
-                  <HiTrash className="w-4 h-4" />
-                </button>
               )}
             </div>
           </div>

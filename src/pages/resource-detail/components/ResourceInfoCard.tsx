@@ -82,3 +82,4 @@ const ResourceInfoCard = ({
 }
 
 export default ResourceInfoCard
+
