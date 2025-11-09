@@ -16,6 +16,7 @@ import {
   TranscriptionParams,
   ResourceType,
 } from '../../models';
+import { loadSubtitleFromTasks } from '../../utils/subtitleUtils';
 import ResourceInfoCard from './components/ResourceInfoCard';
 import TranscriptionHistory from './components/TranscriptionHistory';
 import LoadingCard from './components/LoadingCard';
@@ -33,6 +34,7 @@ const ResourceDetailPage = () => {
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [resultContent, setResultContent] = useState<string | null>(null);
+  const [subtitleUrl, setSubtitleUrl] = useState<string | null>(null); // WebVTT 字幕的 URL
   const [showCreateTaskModal, setShowCreateTaskModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   
@@ -184,8 +186,7 @@ const ResourceDetailPage = () => {
     cleanupExtractionListeners();
     
     if (resourceId) {
-      loadResource();
-      loadTasks();
+      loadResourceAndTasks();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resourceId]);
@@ -357,7 +358,38 @@ const ResourceDetailPage = () => {
     }
   }, [cleanupExtractionListeners, dispatch]);
 
-  // 加载资源信息
+  // 初始化加载：同时加载资源和任务，完成后处理字幕
+  const loadResourceAndTasks = async () => {
+    if (!resourceId) return;
+    
+    try {
+      // 并行加载资源和任务
+      const [resources, tasksResult] = await Promise.all([
+        invoke<TranscriptionResource[]>('get_transcription_resources'),
+        invoke<TranscriptionTask[]>('get_transcription_tasks', { resourceId }),
+      ]);
+      
+      // 处理资源
+      const found = resources.find((r) => r.id === resourceId);
+      if (found) {
+        setResource(found);
+        await initializeResource(found);
+      }
+      
+      // 处理任务
+      initializeTasks(tasksResult);
+      
+      // 加载字幕（仅在视频资源时，此时 resource 和 tasks 都已加载完成）
+      await initializeSubtitle(found, tasksResult);
+    } catch (err) {
+      console.error('加载资源和任务失败:', err);
+      message.error(err instanceof Error ? err.message : '加载失败');
+      setAudioSrc(null);
+      setVideoSrc(null);
+    }
+  };
+
+  // 加载资源信息（用于重新加载，比如音频提取后）
   const loadResource = async () => {
     if (!resourceId) return;
     try {
@@ -366,120 +398,8 @@ const ResourceDetailPage = () => {
 
       if (found) {
         setResource(found);
-        
-        // 使用前端 fs 插件检查文件是否存在
-        try {
-          const fileExists = await exists(found.file_path);
-          if (!fileExists) {
-            message.error(`文件不存在: ${found.file_path}`);
-            setAudioSrc(null);
-            setVideoSrc(null);
-            return;
-          }
-        } catch (err) {
-          console.error('检查文件失败:', err);
-          message.error(`无法访问文件: ${found.file_path}`);
-          setAudioSrc(null);
-          setVideoSrc(null);
-          return;
-        }
-        
-        // 根据资源类型设置播放源
-        if (found.resource_type === ResourceType.VIDEO) {
-          // 视频资源：显示视频文件
-          try {
-            const videoPath = convertFileSrc(found.file_path);
-            console.log('视频原始路径:', found.file_path);
-            console.log('视频转换后路径:', videoPath);
-            setVideoSrc(videoPath);
-            setAudioSrc(null);
-          } catch (err) {
-            console.error('转换视频路径失败:', err);
-            message.error('无法创建视频播放器');
-            setVideoSrc(null);
-          }
-
-          // 设置提取事件监听器
-          await setupExtractionListeners(resourceId);
-
-          // 检查是否需要提取音频
-          if (!found.extracted_audio_path) {
-            // 自动触发音频提取
-            dispatch(setExtracting({ resourceId, isExtracting: true }));
-            dispatch(setProgress({ resourceId, progress: 0 }));
-            
-            invoke<string>('extract_audio_from_video', { resourceId })
-              .then((result) => {
-                console.log('音频提取成功:', result);
-                dispatch(setExtracting({ resourceId, isExtracting: false }));
-                dispatch(setProgress({ resourceId, progress: 100 }));
-                // 重新加载资源以获取提取的音频路径
-                // 使用 setTimeout 确保后端文件写入完成
-                setTimeout(() => {
-                  loadResource().catch((err) => {
-                    console.error('重新加载资源失败:', err);
-                    // 不显示错误，因为提取已经成功
-                  });
-                }, 500);
-              })
-              .catch((err) => {
-                console.error('音频提取失败:', err);
-                const errorMessage = err instanceof Error ? err.message : String(err);
-                // 检查是否是真正的错误，还是只是警告信息
-                if (errorMessage.includes('音频已提取') || errorMessage.includes('正在进行中')) {
-                  // 这些是成功的情况，不应该显示错误
-                  console.log('音频提取状态:', errorMessage);
-                  dispatch(setExtracting({ resourceId, isExtracting: false }));
-                  dispatch(setProgress({ resourceId, progress: 100 }));
-                  // 重新加载资源
-                  setTimeout(() => {
-                    loadResource().catch((loadErr) => {
-                      console.error('重新加载资源失败:', loadErr);
-                    });
-                  }, 500);
-                } else {
-                  // 真正的错误
-                  message.error(errorMessage || '音频提取失败');
-                  dispatch(setExtracting({ resourceId, isExtracting: false }));
-                }
-              });
-          } else {
-            // 如果已有提取的音频路径，检查文件是否存在
-            try {
-              const audioExists = await exists(found.extracted_audio_path);
-              if (audioExists) {
-                try {
-                  const audioPath = convertFileSrc(found.extracted_audio_path);
-                  setAudioSrc(audioPath);
-                  console.log('提取的音频文件已加载:', audioPath);
-                } catch (convertErr) {
-                  console.error('转换提取的音频路径失败:', convertErr);
-                  // 不显示错误消息，因为文件存在，只是转换路径失败
-                }
-              } else {
-                console.warn('提取的音频文件不存在:', found.extracted_audio_path);
-                // 文件不存在，可能需要重新提取
-                // 但不自动触发，让用户手动操作
-              }
-            } catch (err) {
-              console.error('检查提取的音频文件失败:', err);
-              // 不显示错误消息，避免干扰用户
-            }
-          }
-        } else {
-          // 音频资源：显示音频文件
-          try {
-            const audioPath = convertFileSrc(found.file_path);
-            console.log('音频原始路径:', found.file_path);
-            console.log('音频转换后路径:', audioPath);
-            setAudioSrc(audioPath);
-            setVideoSrc(null);
-          } catch (err) {
-            console.error('转换音频路径失败:', err);
-            message.error('无法创建音频播放器');
-            setAudioSrc(null);
-          }
-        }
+        // 复用初始化函数
+        await initializeResource(found);
       }
     } catch (err) {
       console.error('加载资源失败:', err);
@@ -488,6 +408,150 @@ const ResourceDetailPage = () => {
       setVideoSrc(null);
     }
   };
+
+  // 初始化资源：设置播放源、音频提取等
+  const initializeResource = useCallback(async (found: TranscriptionResource) => {
+    if (!resourceId) return;
+    
+    // 使用前端 fs 插件检查文件是否存在
+    try {
+      const fileExists = await exists(found.file_path);
+      if (!fileExists) {
+        message.error(`文件不存在: ${found.file_path}`);
+        setAudioSrc(null);
+        setVideoSrc(null);
+        return;
+      }
+    } catch (err) {
+      console.error('检查文件失败:', err);
+      message.error(`无法访问文件: ${found.file_path}`);
+      setAudioSrc(null);
+      setVideoSrc(null);
+      return;
+    }
+    
+    // 根据资源类型设置播放源
+    if (found.resource_type === ResourceType.VIDEO) {
+      // 视频资源：显示视频文件
+      try {
+        const videoPath = convertFileSrc(found.file_path);
+        console.log('视频原始路径:', found.file_path);
+        console.log('视频转换后路径:', videoPath);
+        setVideoSrc(videoPath);
+        setAudioSrc(null);
+      } catch (err) {
+        console.error('转换视频路径失败:', err);
+        message.error('无法创建视频播放器');
+        setVideoSrc(null);
+      }
+
+      // 设置提取事件监听器
+      await setupExtractionListeners(resourceId);
+
+      // 检查是否需要提取音频
+      if (!found.extracted_audio_path) {
+        // 自动触发音频提取
+        dispatch(setExtracting({ resourceId, isExtracting: true }));
+        dispatch(setProgress({ resourceId, progress: 0 }));
+        
+        invoke<string>('extract_audio_from_video', { resourceId })
+          .then((result) => {
+            console.log('音频提取成功:', result);
+            dispatch(setExtracting({ resourceId, isExtracting: false }));
+            dispatch(setProgress({ resourceId, progress: 100 }));
+            // 重新加载资源以获取提取的音频路径
+            setTimeout(() => {
+              loadResource().catch((err) => {
+                console.error('重新加载资源失败:', err);
+              });
+            }, 500);
+          })
+          .catch((err) => {
+            console.error('音频提取失败:', err);
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            if (errorMessage.includes('音频已提取') || errorMessage.includes('正在进行中')) {
+              console.log('音频提取状态:', errorMessage);
+              dispatch(setExtracting({ resourceId, isExtracting: false }));
+              dispatch(setProgress({ resourceId, progress: 100 }));
+              setTimeout(() => {
+                loadResource().catch((loadErr) => {
+                  console.error('重新加载资源失败:', loadErr);
+                });
+              }, 500);
+            } else {
+              message.error(errorMessage || '音频提取失败');
+              dispatch(setExtracting({ resourceId, isExtracting: false }));
+            }
+          });
+      } else {
+        // 如果已有提取的音频路径，检查文件是否存在
+        try {
+          const audioExists = await exists(found.extracted_audio_path);
+          if (audioExists) {
+            try {
+              const audioPath = convertFileSrc(found.extracted_audio_path);
+              setAudioSrc(audioPath);
+              console.log('提取的音频文件已加载:', audioPath);
+            } catch (convertErr) {
+              console.error('转换提取的音频路径失败:', convertErr);
+            }
+          } else {
+            console.warn('提取的音频文件不存在:', found.extracted_audio_path);
+          }
+        } catch (err) {
+          console.error('检查提取的音频文件失败:', err);
+        }
+      }
+    } else {
+      // 音频资源：显示音频文件
+      try {
+        const audioPath = convertFileSrc(found.file_path);
+        console.log('音频原始路径:', found.file_path);
+        console.log('音频转换后路径:', audioPath);
+        setAudioSrc(audioPath);
+        setVideoSrc(null);
+      } catch (err) {
+        console.error('转换音频路径失败:', err);
+        message.error('无法创建音频播放器');
+        setAudioSrc(null);
+      }
+    }
+  }, [resourceId, dispatch, setupExtractionListeners]);
+
+  // 初始化任务：选择任务
+  const initializeTasks = useCallback((tasksResult: TranscriptionTask[]) => {
+    const sortedTasks = [...tasksResult].sort((a, b) => 
+      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+    
+    setTasks(tasksResult);
+    
+    // 选择任务的优先级
+    if (sortedTasks.length > 0) {
+      const runningTask = sortedTasks.find(t => t.status === TranscriptionTaskStatus.RUNNING);
+      if (runningTask) {
+        setSelectedTaskId(runningTask.id);
+      } else {
+        const completedTask = sortedTasks.find(t => t.status === TranscriptionTaskStatus.COMPLETED);
+        if (completedTask) {
+          setSelectedTaskId(completedTask.id);
+        } else {
+          setSelectedTaskId(sortedTasks[0].id);
+        }
+      }
+    }
+  }, []);
+
+  // 初始化字幕：加载字幕（仅在视频资源时）
+  const initializeSubtitle = useCallback(async (
+    found: TranscriptionResource | undefined,
+    tasksResult: TranscriptionTask[]
+  ) => {
+    if (found?.resource_type === ResourceType.VIDEO && resourceId && tasksResult.length > 0) {
+      const newSubtitleUrl = await loadSubtitleFromTasks(tasksResult);
+      setSubtitleUrl(newSubtitleUrl);
+    }
+  }, [resourceId]);
 
   // 加载转写任务列表
   const loadTasks = async (autoSwitchToRunning = true) => {
@@ -503,15 +567,17 @@ const ResourceDetailPage = () => {
       );
       
       const previousTasks = tasks;
-      setTasks(result);
       
-      // 选择任务的优先级：
-      // 1. 如果有运行中的任务，选择最新的运行中的任务（如果 autoSwitchToRunning 为 true）
-      // 2. 否则，如果有已完成的任务，选择最新的已完成的任务
-      // 3. 否则，选择最新的任务
-      if (sortedTasks.length > 0) {
+      // 复用初始化函数处理任务
+      initializeTasks(result);
+      
+      // 复用初始化函数加载字幕
+      await initializeSubtitle(resource || undefined, result);
+      
+      // 选择任务的优先级（仅在 autoSwitchToRunning 为 true 时自动切换）
+      if (sortedTasks.length > 0 && autoSwitchToRunning) {
         const runningTask = sortedTasks.find(t => t.status === TranscriptionTaskStatus.RUNNING);
-        if (runningTask && autoSwitchToRunning) {
+        if (runningTask) {
           // 检查是否是新出现的运行任务，或者当前选中的任务不是运行中的
           const previousRunningTask = previousTasks.find(t => t.id === runningTask.id);
           const isNewRunningTask = !previousRunningTask || previousRunningTask.status !== TranscriptionTaskStatus.RUNNING;
@@ -521,16 +587,6 @@ const ResourceDetailPage = () => {
           // 如果是新出现的运行任务，或者当前选中的任务不是运行中的，则切换到运行中的任务
           if (isNewRunningTask || currentTaskIsNotRunning) {
             setSelectedTaskId(runningTask.id);
-          }
-        } else if (!runningTask) {
-          // 如果没有运行中的任务，保持当前选择或选择已完成的任务
-          if (!selectedTaskId || !result.find(t => t.id === selectedTaskId)) {
-            const completedTask = sortedTasks.find(t => t.status === TranscriptionTaskStatus.COMPLETED);
-            if (completedTask) {
-              setSelectedTaskId(completedTask.id);
-            } else {
-              setSelectedTaskId(sortedTasks[0].id);
-            }
           }
         }
       }
@@ -613,13 +669,15 @@ const ResourceDetailPage = () => {
         // 即使失败也要重新加载任务列表以更新状态
         loadTasks(true);
       });
+      
+      // 任务完成后重新加载字幕（loadTasks 内部会自动处理）
     } catch (err) {
       console.error('创建转写任务失败:', err);
       message.error(err instanceof Error ? err.message : '创建转写任务失败');
     }
   };
 
-  // 组件卸载时清理事件监听器
+  // 组件卸载时清理事件监听器和 Blob URL
   useEffect(() => {
     return () => {
       // 组件卸载时，确保清理所有监听器
@@ -681,6 +739,7 @@ const ResourceDetailPage = () => {
             resource={resource}
             audioSrc={audioSrc}
             videoSrc={videoSrc}
+            subtitleUrl={subtitleUrl}
             onAudioError={(error: string) => message.error(error)}
             onVideoError={(error: string) => message.error(error)}
             onDelete={() => setShowDeleteModal(true)}

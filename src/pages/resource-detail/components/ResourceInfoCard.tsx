@@ -8,6 +8,7 @@ interface ResourceInfoCardProps {
   resource: TranscriptionResource
   audioSrc: string | null
   videoSrc: string | null
+  subtitleUrl?: string | null // WebVTT 字幕的 URL
   onAudioError: (error: string) => void
   onVideoError: (error: string) => void
   onDelete?: () => void
@@ -17,6 +18,7 @@ const ResourceInfoCard = memo(({
   resource,
   audioSrc,
   videoSrc,
+  subtitleUrl,
   onAudioError,
   onVideoError,
   onDelete,
@@ -44,6 +46,7 @@ const ResourceInfoCard = memo(({
                 key={playerKey}
                 src={videoSrc}
                 type="video"
+                subtitleUrl={subtitleUrl}
                 onError={(error: unknown) => {
                   console.error('视频加载失败:', error)
                   onVideoError(

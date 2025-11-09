@@ -1553,6 +1553,25 @@ async fn check_file_exists(file_path: String) -> Result<bool, String> {
     Ok(path.exists() && path.is_file())
 }
 
+// 创建临时字幕文件并返回路径
+#[tauri::command]
+async fn create_temp_subtitle_file(
+    task_id: String,
+    vtt_content: String,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let subtitles_dir = app_data_dir.join("subtitles");
+    std::fs::create_dir_all(&subtitles_dir)
+        .map_err(|e| format!("无法创建字幕目录: {}", e))?;
+    
+    let subtitle_file = subtitles_dir.join(format!("{}.vtt", task_id));
+    std::fs::write(&subtitle_file, vtt_content)
+        .map_err(|e| format!("无法创建字幕文件: {}", e))?;
+    
+    Ok(subtitle_file.to_string_lossy().to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1580,6 +1599,7 @@ pub fn run() {
             execute_command,
             check_file_exists,
             extract_audio_from_video,
+            create_temp_subtitle_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
