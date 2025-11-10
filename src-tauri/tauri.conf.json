@@ -24,7 +24,7 @@
         "scope": ["**"]
       },
 
-      "csp": "default-src 'self'; media-src 'self' asset: https://asset.localhost asset://localhost;"
+      "csp": "default-src 'self' https://cdn.plyr.io; media-src 'self' asset: https://asset.localhost asset://localhost https://cdn.plyr.io;"
     }
   },
   "bundle": {
