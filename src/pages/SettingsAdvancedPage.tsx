@@ -6,8 +6,7 @@ const SettingsAdvancedPage = () => {
         <p>这是高级设置页面</p>
       </div>
     </div>
-  );
-};
+  )
+}
 
-export default SettingsAdvancedPage;
-
+export default SettingsAdvancedPage

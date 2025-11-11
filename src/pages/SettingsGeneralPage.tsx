@@ -1,50 +1,50 @@
-import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { openPath } from '@tauri-apps/plugin-opener';
-import { ModelInfo } from '../models';
-import { HiXCircle, HiArrowDownTray, HiFolderOpen } from 'react-icons/hi2';
-import { useMessage } from '../componets/Toast';
+import { useState, useEffect } from 'react'
+import { invoke } from '@tauri-apps/api/core'
+import { openPath } from '@tauri-apps/plugin-opener'
+import { ModelInfo } from '../models'
+import { HiXCircle, HiArrowDownTray, HiFolderOpen } from 'react-icons/hi2'
+import { useMessage } from '../componets/Toast'
 
 const SettingsGeneralPage = () => {
-  const [models, setModels] = useState<ModelInfo[]>([]);
-  const [modelsDir, setModelsDir] = useState<string>('');
-  const [loadingModels, setLoadingModels] = useState(false);
-  const [showDownloadModal, setShowDownloadModal] = useState(false);
+  const [models, setModels] = useState<ModelInfo[]>([])
+  const [modelsDir, setModelsDir] = useState<string>('')
+  const [loadingModels, setLoadingModels] = useState(false)
+  const [showDownloadModal, setShowDownloadModal] = useState(false)
 
   // 加载模型列表
   const loadModels = async () => {
     try {
-      setLoadingModels(true);
+      setLoadingModels(true)
       const [modelsList, dir] = await Promise.all([
         invoke<ModelInfo[]>('get_downloaded_models'),
         invoke<string>('get_models_dir'),
-      ]);
-      setModels(modelsList);
-      setModelsDir(dir);
+      ])
+      setModels(modelsList)
+      setModelsDir(dir)
     } catch (err) {
-      console.error('加载模型列表失败:', err);
+      console.error('加载模型列表失败:', err)
     } finally {
-      setLoadingModels(false);
+      setLoadingModels(false)
     }
-  };
+  }
 
   useEffect(() => {
-    loadModels();
-  }, []);
+    loadModels()
+  }, [])
 
   // 打开模型文件夹
   const handleOpenFolder = async () => {
     try {
       if (modelsDir) {
-        await openPath(modelsDir);
+        await openPath(modelsDir)
       }
     } catch (err) {
-      console.error('打开文件夹失败:', err);
+      console.error('打开文件夹失败:', err)
     }
-  };
+  }
 
   // 获取已下载的模型列表
-  const downloadedModels = models.filter(model => model.downloaded);
+  const downloadedModels = models.filter((model) => model.downloaded)
 
   return (
     <div className="space-y-6 p-6 h-full">
@@ -107,14 +107,14 @@ const SettingsGeneralPage = () => {
         />
       )}
     </div>
-  );
-};
+  )
+}
 
 // 模型下载弹出框组件
 interface ModelDownloadModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onModelDownloaded: () => void;
+  isOpen: boolean
+  onClose: () => void
+  onModelDownloaded: () => void
 }
 
 const ModelDownloadModal = ({
@@ -122,67 +122,67 @@ const ModelDownloadModal = ({
   onClose,
   onModelDownloaded,
 }: ModelDownloadModalProps) => {
-  const message = useMessage();
-  const [models, setModels] = useState<ModelInfo[]>([]);
-  const [loadingModels, setLoadingModels] = useState(false);
-  const [downloadingModel, setDownloadingModel] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const message = useMessage()
+  const [models, setModels] = useState<ModelInfo[]>([])
+  const [loadingModels, setLoadingModels] = useState(false)
+  const [downloadingModel, setDownloadingModel] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   // 加载模型列表
   const loadModels = async () => {
     try {
-      setLoadingModels(true);
-      const modelsList = await invoke<ModelInfo[]>('get_downloaded_models');
-      setModels(modelsList);
+      setLoadingModels(true)
+      const modelsList = await invoke<ModelInfo[]>('get_downloaded_models')
+      setModels(modelsList)
     } catch (err) {
-      console.error('加载模型列表失败:', err);
+      console.error('加载模型列表失败:', err)
     } finally {
-      setLoadingModels(false);
+      setLoadingModels(false)
     }
-  };
+  }
 
   useEffect(() => {
     if (isOpen) {
-      loadModels();
+      loadModels()
     }
-  }, [isOpen]);
+  }, [isOpen])
 
   // 下载模型
   const handleDownloadModel = async (modelName: string) => {
     try {
-      setDownloadingModel(modelName);
-      setError(null);
-      await invoke<string>('download_model', { modelName });
+      setDownloadingModel(modelName)
+      setError(null)
+      await invoke<string>('download_model', { modelName })
       // 显示成功 toast
-      message.success(`模型 ${modelName} 下载成功`);
+      message.success(`模型 ${modelName} 下载成功`)
       // 重新加载模型列表
-      await loadModels();
+      await loadModels()
       // 通知父组件刷新
-      onModelDownloaded();
+      onModelDownloaded()
     } catch (err) {
-      console.error('下载模型失败:', err);
-      const errorMsg = err instanceof Error ? err.message : '下载模型失败';
-      setError(errorMsg);
-      message.error(`模型 ${modelName} 下载失败: ${errorMsg}`);
+      console.error('下载模型失败:', err)
+      const errorMsg = err instanceof Error ? err.message : '下载模型失败'
+      setError(errorMsg)
+      message.error(`模型 ${modelName} 下载失败: ${errorMsg}`)
     } finally {
-      setDownloadingModel(null);
+      setDownloadingModel(null)
     }
-  };
+  }
 
   // 格式化文件大小
   const formatSize = (bytes?: number) => {
-    if (!bytes) return '-';
-    const units = ['B', 'KB', 'MB', 'GB'];
-    let size = bytes;
-    let unitIndex = 0;
+    if (!bytes) return '-'
+    const units = ['B', 'KB', 'MB', 'GB']
+    let size = bytes
+    let unitIndex = 0
     while (size >= 1024 && unitIndex < units.length - 1) {
-      size /= 1024;
-      unitIndex++;
+      size /= 1024
+      unitIndex++
     }
-    return `${size.toFixed(2)} ${units[unitIndex]}`;
-  };
+    return `${size.toFixed(2)} ${units[unitIndex]}`
+  }
 
-  if (!isOpen) return null;
+  if (!isOpen) return null
 
   return (
     <div className="modal modal-open">
@@ -204,7 +204,9 @@ const ModelDownloadModal = ({
                 <div className="flex-1">
                   <div className="font-medium">{model.name}</div>
                   <div className="text-sm text-base-content/70">
-                    {model.downloaded ? `已下载 (${formatSize(model.size)})` : '未下载'}
+                    {model.downloaded
+                      ? `已下载 (${formatSize(model.size)})`
+                      : '未下载'}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -212,12 +214,16 @@ const ModelDownloadModal = ({
                     <div className="badge badge-success">已安装</div>
                   ) : (
                     <button
-                      className={`btn ${downloadingModel === model.name ? 'loading' : ''}`}
+                      className={`btn ${
+                        downloadingModel === model.name ? 'loading' : ''
+                      }`}
                       onClick={() => handleDownloadModel(model.name)}
                       disabled={downloadingModel !== null}
                       title="下载模型"
                     >
-                      {downloadingModel !== model.name && <HiArrowDownTray className="h-4 w-4" />}
+                      {downloadingModel !== model.name && (
+                        <HiArrowDownTray className="h-4 w-4" />
+                      )}
                       <span className="ml-1">下载</span>
                     </button>
                   )}
@@ -242,7 +248,7 @@ const ModelDownloadModal = ({
       </div>
       <div className="modal-backdrop" onClick={onClose}></div>
     </div>
-  );
-};
+  )
+}
 
-export default SettingsGeneralPage;
+export default SettingsGeneralPage

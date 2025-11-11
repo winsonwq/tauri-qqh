@@ -35,6 +35,13 @@
     "lodash": "^4.17.21",
     "tailwindcss": "^4.1.17",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4"
+    "vite": "^7.0.4",
+    "eslint": "^8.57.0",
+    "@typescript-eslint/eslint-plugin": "^7.14.1",
+    "@typescript-eslint/parser": "^7.14.1",
+    "eslint-plugin-import": "^2.29.1",
+    "eslint-plugin-react": "latest",
+    "eslint-plugin-react-hooks": "latest",
+    "@stylistic/eslint-plugin": "^2.1.0"
   }
 }
