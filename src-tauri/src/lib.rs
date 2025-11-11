@@ -163,28 +163,25 @@ fn get_app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 
 
 // 获取 whisper-cli 可执行文件路径
-fn get_whisper_cli_path() -> Result<PathBuf, String> {
-    // 获取应用资源目录（tools 文件夹所在位置）
-    // 在开发环境中，这通常是项目根目录下的 src-tauri/tools
-    // 在生产环境中，这应该是打包后的资源目录
+fn get_whisper_cli_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    // 首先尝试从 Tauri 资源目录获取（生产环境）
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let path = resource_dir.join("tools/whisper/macos-arm64/bin/whisper-cli");
+        if path.exists() && path.is_file() {
+            return Ok(path);
+        }
+    }
     
-    // 首先尝试从环境变量或资源目录获取
+    // 开发环境：从可执行文件目录向上查找
     let exe_path = std::env::current_exe()
         .map_err(|e| format!("无法获取当前可执行文件路径: {}", e))?;
     
-    // 获取可执行文件所在目录
     let exe_dir = exe_path.parent()
         .ok_or("无法获取可执行文件目录")?;
     
-    // 尝试多个可能的路径
+    // 尝试开发环境的多个可能路径
     let possible_paths = vec![
-        // 开发环境：从可执行文件目录向上查找
-        exe_dir.join("../../tools/whisper/macos-arm64/bin/whisper-cli"),
-        exe_dir.join("../tools/whisper/macos-arm64/bin/whisper-cli"),
-        // 生产环境：资源目录
-        exe_dir.join("resources/tools/whisper/macos-arm64/bin/whisper-cli"),
-        // 直接使用绝对路径（开发环境）
-        PathBuf::from("/Users/aqiu/projects/qqh-tauri/src-tauri/tools/whisper/macos-arm64/bin/whisper-cli"),
+        exe_dir.join("tools/whisper/macos-arm64/bin/whisper-cli"),
     ];
     
     for path in possible_paths {
@@ -197,23 +194,25 @@ fn get_whisper_cli_path() -> Result<PathBuf, String> {
 }
 
 // 获取 ffmpeg 可执行文件路径
-fn get_ffmpeg_path() -> Result<PathBuf, String> {
-    // 获取应用资源目录（tools 文件夹所在位置）
+fn get_ffmpeg_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    // 首先尝试从 Tauri 资源目录获取（生产环境）
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let path = resource_dir.join("tools/ffmpeg/macos-arm64/ffmpeg");
+        if path.exists() && path.is_file() {
+            return Ok(path);
+        }
+    }
+    
+    // 开发环境：从可执行文件目录向上查找
     let exe_path = std::env::current_exe()
         .map_err(|e| format!("无法获取当前可执行文件路径: {}", e))?;
     
     let exe_dir = exe_path.parent()
         .ok_or("无法获取可执行文件目录")?;
     
-    // 尝试多个可能的路径
+    // 尝试开发环境的多个可能路径
     let possible_paths = vec![
-        // 开发环境：从可执行文件目录向上查找
-        exe_dir.join("../../tools/ffmpeg/macos-arm64/ffmpeg"),
-        exe_dir.join("../tools/ffmpeg/macos-arm64/ffmpeg"),
-        // 生产环境：资源目录
-        exe_dir.join("resources/tools/ffmpeg/macos-arm64/ffmpeg"),
-        // 直接使用绝对路径（开发环境）
-        PathBuf::from("/Users/aqiu/projects/qqh-tauri/src-tauri/tools/ffmpeg/macos-arm64/ffmpeg"),
+        exe_dir.join("tools/ffmpeg/macos-arm64/ffmpeg"),
     ];
     
     for path in possible_paths {
@@ -564,7 +563,7 @@ async fn execute_transcription_task(
     }
     
     // 获取 whisper-cli 路径
-    let whisper_cli = get_whisper_cli_path()?;
+    let whisper_cli = get_whisper_cli_path(&app)?;
     
     // 构建 whisper-cli 命令
     // whisper-cli 参数：
@@ -1047,8 +1046,8 @@ pub struct FastWhisperStatus {
 
 // 检测 whisper-cli 环境
 #[tauri::command]
-async fn check_fast_whisper_status() -> Result<FastWhisperStatus, String> {
-    match get_whisper_cli_path() {
+async fn check_fast_whisper_status(app: tauri::AppHandle) -> Result<FastWhisperStatus, String> {
+    match get_whisper_cli_path(&app) {
         Ok(path) => {
             // 检查文件是否可执行
             let available = path.exists() && path.is_file();
@@ -1078,10 +1077,10 @@ async fn check_fast_whisper_status() -> Result<FastWhisperStatus, String> {
 
 // 安装 faster-whisper（已废弃，工具已打包在应用中）
 #[tauri::command]
-async fn install_faster_whisper() -> Result<String, String> {
+async fn install_faster_whisper(app: tauri::AppHandle) -> Result<String, String> {
     // whisper-cli 已经打包在应用中，不需要安装
     // 如果检测不到，可能是打包或路径配置问题
-    match get_whisper_cli_path() {
+    match get_whisper_cli_path(&app) {
         Ok(path) => {
             Ok(format!("whisper-cli 工具已就绪，路径: {}", path.display()))
         }
@@ -1373,7 +1372,7 @@ async fn extract_audio_from_video(
     .map_err(|e| format!("数据库操作失败: {}", e))??;
     
     // 获取 ffmpeg 路径
-    let ffmpeg_path = get_ffmpeg_path()?;
+    let ffmpeg_path = get_ffmpeg_path(&app)?;
     
     // 准备输出文件路径
     let extracted_audio_dir = app_data_dir.join("extracted_audio");

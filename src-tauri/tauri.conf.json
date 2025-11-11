@@ -37,6 +37,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": ["tools/**/*"],
     "macOS": {
       "entitlements": "./Entitlements.plist",
       "minimumSystemVersion": "12.0"
