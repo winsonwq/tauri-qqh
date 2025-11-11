@@ -173,10 +173,8 @@ const AppSideBar = ({ onToggleSidebar }: AppSideBarProps) => {
         {/* Logo 区域 */}
         <div className="flex items-center justify-start h-20 border-b border-base-300 px-4">
           <div className="flex items-center gap-3">
-            <FaRobot className="h-8 w-8 text-black" />
             <div className="flex flex-col">
-              <span className="text-lg font-bold text-black leading-tight">回音转写</span>
-              <span className="text-xs font-medium text-black leading-tight">EchoScribe</span>
+              <span className="text-xl font-bold text-black leading-tight">Echo</span>
             </div>
           </div>
         </div>

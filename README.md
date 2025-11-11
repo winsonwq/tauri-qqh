@@ -1,6 +1,6 @@
-# Qqh Tauri - 音频转写应用
+# Echo | Intelligent Voice Transcription with AI Agent
 
-基于 Tauri + React + TypeScript 构建的桌面音频转写应用，使用 Whisper.cpp 进行本地音频转写。
+A desktop intelligent voice transcription application with an AI agent, built with Tauri, React, and TypeScript, utilizing Whisper.cpp for local audio transcription.
 
 ## 技术栈
 
