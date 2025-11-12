@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { openPath } from '@tauri-apps/plugin-opener'
 import { ModelInfo, ModelDownloadProgress, AIConfig } from '../models'
-import { HiXCircle, HiArrowDownTray, HiFolderOpen, HiPencil, HiTrash, HiPlus } from 'react-icons/hi2'
+import { HiXCircle, HiArrowDownTray, HiFolderOpen, HiPencil, HiTrash, HiPlus, HiCheckCircle } from 'react-icons/hi2'
 import { useMessage } from '../componets/Toast'
 
 const SettingsGeneralPage = () => {
@@ -468,6 +468,39 @@ const DeleteConfirmModal = ({ isOpen, configName, onClose, onConfirm }: DeleteCo
   )
 }
 
+// 模型删除确认弹窗
+interface ModelDeleteConfirmModalProps {
+  isOpen: boolean
+  modelName: string
+  onClose: () => void
+  onConfirm: () => void
+}
+
+const ModelDeleteConfirmModal = ({ isOpen, modelName, onClose, onConfirm }: ModelDeleteConfirmModalProps) => {
+  if (!isOpen) return null
+
+  return (
+    <div className="modal modal-open">
+      <div className="modal-box">
+        <h3 className="font-bold text-lg mb-4">确认删除</h3>
+        <p className="mb-4">
+          确定要删除模型 <span className="font-semibold">"{modelName}"</span> 吗？
+        </p>
+        <p className="text-sm text-base-content/70 mb-4">此操作不可恢复。</p>
+        <div className="modal-action">
+          <button className="btn" onClick={onClose}>
+            取消
+          </button>
+          <button className="btn btn-error" onClick={onConfirm}>
+            删除
+          </button>
+        </div>
+      </div>
+      <div className="modal-backdrop" onClick={onClose}></div>
+    </div>
+  )
+}
+
 // 模型下载弹出框组件
 interface ModelDownloadModalProps {
   isOpen: boolean
@@ -486,6 +519,7 @@ const ModelDownloadModal = ({
   const [downloadingModel, setDownloadingModel] = useState<string | null>(null)
   const [downloadProgress, setDownloadProgress] = useState<Record<string, ModelDownloadProgress>>({})
   const [deletingModel, setDeletingModel] = useState<string | null>(null)
+  const [deletingModelName, setDeletingModelName] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const unlistenRef = useRef<UnlistenFn | null>(null)
 
@@ -595,20 +629,27 @@ const ModelDownloadModal = ({
     }
   }
 
-  // 删除模型
-  const handleDeleteModel = async (modelName: string) => {
+  // 删除模型（显示确认弹窗）
+  const handleDeleteModel = (modelName: string) => {
+    setDeletingModelName(modelName)
+  }
+
+  // 确认删除模型
+  const handleConfirmDeleteModel = async () => {
+    if (!deletingModelName) return
     try {
-      setDeletingModel(modelName)
+      setDeletingModel(deletingModelName)
       setError(null)
-      await invoke<string>('delete_model', { modelName })
-      message.success(`模型 ${modelName} 删除成功`)
+      await invoke<string>('delete_model', { modelName: deletingModelName })
+      message.success(`模型 ${deletingModelName} 删除成功`)
+      setDeletingModelName(null)
       await loadModels()
       onModelDownloaded()
     } catch (err) {
       console.error('删除模型失败:', err)
       const errorMsg = err instanceof Error ? err.message : '删除模型失败'
       setError(errorMsg)
-      message.error(`模型 ${modelName} 删除失败: ${errorMsg}`)
+      message.error(`模型 ${deletingModelName} 删除失败: ${errorMsg}`)
     } finally {
       setDeletingModel(null)
     }
@@ -658,34 +699,31 @@ const ModelDownloadModal = ({
                   <div className="flex items-center justify-between">
                     <div className="flex-1">
                       <div className="font-medium">{model.name}</div>
-                      <div className="text-sm text-base-content/70">
-                        {isDownloading && progress
-                          ? `下载中... ${progress.progress.toFixed(1)}%`
-                          : model.downloaded
-                          ? `已下载 (${formatSize(model.size)})`
-                          : '未下载'}
+                      <div className="text-sm text-base-content/70 flex items-center gap-1">
+                        {isDownloading && progress ? (
+                          `下载中... ${progress.progress.toFixed(1)}%`
+                        ) : model.downloaded ? (
+                          <>
+                            <HiCheckCircle className="h-4 w-4 text-success flex-shrink-0" />
+                            <span>已下载 ({formatSize(model.size)})</span>
+                          </>
+                        ) : (
+                          '未下载'
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
                       {isDownloading ? (
                         <div className="badge badge-info">下载中</div>
                       ) : model.downloaded ? (
-                        <div className="flex items-center gap-2">
-                          <div className="badge badge-success">已安装</div>
-                          <button
-                            className={`btn btn-outline btn-error btn-sm ${
-                              deletingModel === model.name ? 'loading' : ''
-                            }`}
-                            onClick={() => handleDeleteModel(model.name)}
-                            disabled={deletingModel !== null || downloadingModel !== null}
-                            title="删除模型"
-                          >
-                            {deletingModel !== model.name && (
-                              <HiTrash className="h-4 w-4" />
-                            )}
-                            <span className="ml-1">删除</span>
-                          </button>
-                        </div>
+                        <button
+                          className="btn btn-sm btn-ghost text-error"
+                          onClick={() => handleDeleteModel(model.name)}
+                          disabled={deletingModel !== null || downloadingModel !== null}
+                          title="删除模型"
+                        >
+                          <HiTrash className="h-4 w-4" />
+                        </button>
                       ) : (
                         <button
                           className={`btn ${
@@ -738,6 +776,16 @@ const ModelDownloadModal = ({
         </div>
       </div>
       <div className="modal-backdrop" onClick={onClose}></div>
+
+      {/* 删除确认弹窗 */}
+      {deletingModelName && (
+        <ModelDeleteConfirmModal
+          isOpen={!!deletingModelName}
+          modelName={deletingModelName}
+          onClose={() => setDeletingModelName(null)}
+          onConfirm={handleConfirmDeleteModel}
+        />
+      )}
     </div>
   )
 }
