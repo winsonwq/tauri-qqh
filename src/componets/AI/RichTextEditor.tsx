@@ -133,15 +133,17 @@ function EditorContent({ placeholder, onSend }: { placeholder?: string; onSend?:
         }}
       />
       <Placeholder placeholder={placeholder} />
-      <LexicalErrorBoundary
-        onError={(error: Error) => {
-          console.error('Lexical Error Boundary Error:', error)
-        }}
-      >
-        <div />
-      </LexicalErrorBoundary>
     </div>
   )
+}
+
+// 错误处理函数
+// 捕获 Lexical 更新过程中发生的错误并记录它们
+// 如果不抛出错误，Lexical 会尝试优雅地恢复，而不会丢失用户数据
+function onError(error: Error) {
+  console.error('Lexical Editor Error:', error)
+  // 可以根据需要决定是否抛出错误
+  // 如果不抛出，Lexical 会尝试优雅恢复
 }
 
 const RichTextEditor = ({
@@ -166,9 +168,7 @@ const RichTextEditor = ({
       },
     },
     nodes: [TagNode],
-    onError: (error: Error) => {
-      console.error('Lexical Editor Error:', error)
-    },
+    onError,
   }
 
   const handleChange = (_editorState: EditorState, editor: LexicalEditor) => {
