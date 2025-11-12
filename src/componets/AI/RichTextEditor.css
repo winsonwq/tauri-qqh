@@ -1,0 +1,48 @@
+.rich-text-editor-container {
+  position: relative;
+  width: 100%;
+}
+
+.rich-text-editor-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.rich-text-editor-content {
+  width: 100%;
+  min-height: 40px;
+  padding: 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: inherit;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+.rich-text-editor-placeholder {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  pointer-events: none;
+  color: hsl(var(--bc) / 0.5);
+  font-size: 14px;
+  user-select: none;
+}
+
+.rich-text-editor-paragraph {
+  margin: 0;
+  padding: 0;
+}
+
+.rich-text-editor-text-bold {
+  font-weight: bold;
+}
+
+.rich-text-editor-text-italic {
+  font-style: italic;
+}
+
+.rich-text-editor-text-underline {
+  text-decoration: underline;
+}
+

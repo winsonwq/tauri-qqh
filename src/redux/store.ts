@@ -3,6 +3,7 @@ import featureKeysReducer from './slices/featureKeysSlice';
 import themeReducer from './slices/themeSlice';
 import transcriptionLogsReducer from './slices/transcriptionLogsSlice';
 import videoExtractionReducer from './slices/videoExtractionSlice';
+import sidePanelReducer from './slices/sidePanelSlice';
 
 export const store = configureStore({
   reducer: {
@@ -10,6 +11,7 @@ export const store = configureStore({
     theme: themeReducer,
     transcriptionLogs: transcriptionLogsReducer,
     videoExtraction: videoExtractionReducer,
+    sidePanel: sidePanelReducer,
   },
 });
 

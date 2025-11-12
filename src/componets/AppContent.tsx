@@ -66,7 +66,7 @@ const AppContent = () => {
   };
 
   return (
-    <main className={`flex-1 bg-base-100 overflow-auto`}>
+    <main className={`flex-1 bg-base-100 overflow-auto h-full`}>
       {renderPage()}
     </main>
   );

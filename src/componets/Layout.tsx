@@ -1,13 +1,16 @@
 import { useState, useEffect } from "react";
 import { useAppDispatch, useAppSelector } from "../redux/hooks";
 import { setCurrentFeature } from "../redux/slices/featureKeysSlice";
+import { toggleSidePanel } from "../redux/slices/sidePanelSlice";
 import AppSideBar from "./AppSideBar";
 import AppContent from "./AppContent";
-import { FaBars } from "react-icons/fa";
+import SidePanel from "./SidePanel";
+import { FaBars, FaCommentDots } from "react-icons/fa";
 
 const Layout = () => {
   const dispatch = useAppDispatch();
   const { currentFeature } = useAppSelector((state) => state.featureKeys);
+  const { isOpen: sidePanelOpen } = useAppSelector((state) => state.sidePanel);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   // 初始化时，如果当前没有选中的功能，默认设置为首页
@@ -21,8 +24,12 @@ const Layout = () => {
     setSidebarOpen(!sidebarOpen);
   };
 
+  const handleToggleSidePanel = () => {
+    dispatch(toggleSidePanel());
+  };
+
   return (
-    <div className="drawer lg:drawer-open h-full w-full">
+    <div className="drawer lg:drawer-open h-full w-full relative">
       <input
         id="sidebar-toggle"
         type="checkbox"
@@ -46,10 +53,29 @@ const Layout = () => {
           </div>
         </div>
 
-        {/* 主内容区域 */}
-        <AppContent />
+        {/* 主内容区域和右侧面板 */}
+        <div className="flex-1 flex overflow-hidden">
+          {/* 主内容区域 */}
+          <div className="flex-1 overflow-hidden">
+            <AppContent />
+          </div>
+          
+          {/* 右侧面板 */}
+          <SidePanel />
+        </div>
       </div>
       <AppSideBar sidebarOpen={sidebarOpen} onToggleSidebar={handleToggleSidebar} />
+      
+      {/* 右下角固定按钮 */}
+      <button
+        onClick={handleToggleSidePanel}
+        className={`fixed bottom-4 z-50 btn btn-circle btn-primary shadow-lg transition-all ${
+          sidePanelOpen ? 'right-[25rem]' : 'right-4'
+        }`}
+        title={sidePanelOpen ? '关闭侧边面板' : '打开侧边面板'}
+      >
+        <FaCommentDots className="w-5 h-5" />
+      </button>
     </div>
   );
 };
