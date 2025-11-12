@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { openPath } from '@tauri-apps/plugin-opener'
-import { ModelInfo } from '../models'
+import { ModelInfo, ModelDownloadProgress } from '../models'
 import { HiXCircle, HiArrowDownTray, HiFolderOpen } from 'react-icons/hi2'
 import { useMessage } from '../componets/Toast'
 
@@ -126,7 +127,9 @@ const ModelDownloadModal = ({
   const [models, setModels] = useState<ModelInfo[]>([])
   const [loadingModels, setLoadingModels] = useState(false)
   const [downloadingModel, setDownloadingModel] = useState<string | null>(null)
+  const [downloadProgress, setDownloadProgress] = useState<Record<string, ModelDownloadProgress>>({})
   const [error, setError] = useState<string | null>(null)
+  const unlistenRef = useRef<UnlistenFn | null>(null)
 
   // 加载模型列表
   const loadModels = async () => {
@@ -145,6 +148,14 @@ const ModelDownloadModal = ({
     if (isOpen) {
       loadModels()
     }
+    
+    // 清理函数：关闭事件监听
+    return () => {
+      if (unlistenRef.current) {
+        unlistenRef.current()
+        unlistenRef.current = null
+      }
+    }
   }, [isOpen])
 
   // 下载模型
@@ -152,7 +163,49 @@ const ModelDownloadModal = ({
     try {
       setDownloadingModel(modelName)
       setError(null)
+      setDownloadProgress(prev => ({
+        ...prev,
+        [modelName]: {
+          model_name: modelName,
+          downloaded: 0,
+          total: undefined,
+          progress: 0,
+        }
+      }))
+      
+      // 清理之前的事件监听
+      if (unlistenRef.current) {
+        unlistenRef.current()
+        unlistenRef.current = null
+      }
+      
+      // 监听下载进度事件
+      const progressEventName = `model-download-progress-${modelName}`
+      const unlisten = await listen<ModelDownloadProgress>(progressEventName, (event) => {
+        const progress = event.payload
+        setDownloadProgress(prev => ({
+          ...prev,
+          [modelName]: progress
+        }))
+      })
+      unlistenRef.current = unlisten
+      
+      // 开始下载
       await invoke<string>('download_model', { modelName })
+      
+      // 清理事件监听
+      if (unlistenRef.current) {
+        unlistenRef.current()
+        unlistenRef.current = null
+      }
+      
+      // 清除进度信息
+      setDownloadProgress(prev => {
+        const newProgress = { ...prev }
+        delete newProgress[modelName]
+        return newProgress
+      })
+      
       // 显示成功 toast
       message.success(`模型 ${modelName} 下载成功`)
       // 重新加载模型列表
@@ -164,6 +217,19 @@ const ModelDownloadModal = ({
       const errorMsg = err instanceof Error ? err.message : '下载模型失败'
       setError(errorMsg)
       message.error(`模型 ${modelName} 下载失败: ${errorMsg}`)
+      
+      // 清理事件监听
+      if (unlistenRef.current) {
+        unlistenRef.current()
+        unlistenRef.current = null
+      }
+      
+      // 清除进度信息
+      setDownloadProgress(prev => {
+        const newProgress = { ...prev }
+        delete newProgress[modelName]
+        return newProgress
+      })
     } finally {
       setDownloadingModel(null)
     }
@@ -181,6 +247,11 @@ const ModelDownloadModal = ({
     }
     return `${size.toFixed(2)} ${units[unitIndex]}`
   }
+  
+  // 获取模型的下载进度
+  const getModelProgress = (modelName: string): ModelDownloadProgress | undefined => {
+    return downloadProgress[modelName]
+  }
 
   if (!isOpen) return null
 
@@ -196,40 +267,64 @@ const ModelDownloadModal = ({
           </div>
         ) : (
           <div className="mt-4 space-y-2 max-h-96 overflow-y-auto">
-            {models.map((model) => (
-              <div
-                key={model.name}
-                className="flex items-center justify-between p-3 bg-base-200 rounded-lg"
-              >
-                <div className="flex-1">
-                  <div className="font-medium">{model.name}</div>
-                  <div className="text-sm text-base-content/70">
-                    {model.downloaded
-                      ? `已下载 (${formatSize(model.size)})`
-                      : '未下载'}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  {model.downloaded ? (
-                    <div className="badge badge-success">已安装</div>
-                  ) : (
-                    <button
-                      className={`btn ${
-                        downloadingModel === model.name ? 'loading' : ''
-                      }`}
-                      onClick={() => handleDownloadModel(model.name)}
-                      disabled={downloadingModel !== null}
-                      title="下载模型"
-                    >
-                      {downloadingModel !== model.name && (
-                        <HiArrowDownTray className="h-4 w-4" />
+            {models.map((model) => {
+              const progress = getModelProgress(model.name)
+              const isDownloading = downloadingModel === model.name && progress !== undefined
+              
+              return (
+                <div
+                  key={model.name}
+                  className="flex flex-col p-3 bg-base-200 rounded-lg gap-2"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <div className="font-medium">{model.name}</div>
+                      <div className="text-sm text-base-content/70">
+                        {model.downloaded
+                          ? `已下载 (${formatSize(model.size)})`
+                          : isDownloading && progress
+                          ? `下载中... ${progress.progress.toFixed(1)}%`
+                          : '未下载'}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {model.downloaded ? (
+                        <div className="badge badge-success">已安装</div>
+                      ) : (
+                        <button
+                          className={`btn ${
+                            downloadingModel === model.name ? 'loading' : ''
+                          }`}
+                          onClick={() => handleDownloadModel(model.name)}
+                          disabled={downloadingModel !== null}
+                          title="下载模型"
+                        >
+                          {downloadingModel !== model.name && (
+                            <HiArrowDownTray className="h-4 w-4" />
+                          )}
+                          <span className="ml-1">下载</span>
+                        </button>
                       )}
-                      <span className="ml-1">下载</span>
-                    </button>
+                    </div>
+                  </div>
+                  {isDownloading && progress && (
+                    <div className="w-full">
+                      <progress
+                        className="progress progress-primary w-full"
+                        value={progress.progress}
+                        max="100"
+                      ></progress>
+                      <div className="flex justify-between text-xs text-base-content/60 mt-1">
+                        <span>{formatSize(progress.downloaded)}</span>
+                        {progress.total && (
+                          <span>{formatSize(progress.total)}</span>
+                        )}
+                      </div>
+                    </div>
                   )}
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
 

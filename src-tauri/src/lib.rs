@@ -1108,6 +1108,15 @@ pub struct ModelInfo {
     pub downloaded: bool,
 }
 
+// 下载进度信息
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ModelDownloadProgress {
+    pub model_name: String,
+    pub downloaded: u64,
+    pub total: Option<u64>,
+    pub progress: f64, // 0-100
+}
+
 // 获取已下载的模型列表
 #[tauri::command]
 async fn get_downloaded_models(app: tauri::AppHandle) -> Result<Vec<ModelInfo>, String> {
@@ -1196,6 +1205,21 @@ async fn download_model(
     
     let mut stream = response.bytes_stream();
     let mut downloaded: u64 = 0;
+    
+    // 进度事件名称
+    let progress_event_name = format!("model-download-progress-{}", model_name);
+    
+    // 发送初始进度事件（0%）
+    let initial_progress = ModelDownloadProgress {
+        model_name: model_name.clone(),
+        downloaded: 0,
+        total: total_size,
+        progress: 0.0,
+    };
+    let _ = app.emit(&progress_event_name, &initial_progress);
+    
+    let mut last_emitted_progress: f64 = 0.0;
+    let mut last_emitted_bytes: u64 = 0;
 
     use futures_util::StreamExt;
     while let Some(item) = stream.next().await {
@@ -1206,10 +1230,45 @@ async fn download_model(
             .map_err(|e| format!("写入文件失败: {}", e))?;
         downloaded += chunk.len() as u64;
         
-        if let Some(total) = total_size {
-            let progress = (downloaded as f64 / total as f64) * 100.0;
-            eprintln!("下载进度: {:.1}% ({}/{} bytes)", progress, downloaded, total);
+        // 计算进度
+        let progress = if let Some(total) = total_size {
+            (downloaded as f64 / total as f64) * 100.0
+        } else {
+            0.0
+        };
+        
+        // 发送进度事件（每 0.5% 或每 512KB 发送一次，确保及时更新）
+        let should_emit = if let Some(total) = total_size {
+            let progress_diff = progress - last_emitted_progress;
+            progress_diff >= 0.5 || (downloaded - last_emitted_bytes) >= 512 * 1024
+        } else {
+            (downloaded - last_emitted_bytes) >= 512 * 1024
+        };
+        
+        if should_emit {
+            let progress_info = ModelDownloadProgress {
+                model_name: model_name.clone(),
+                downloaded,
+                total: total_size,
+                progress,
+            };
+            let _ = app.emit(&progress_event_name, &progress_info);
+            last_emitted_progress = progress;
+            last_emitted_bytes = downloaded;
         }
+        
+        eprintln!("下载进度: {:.1}% ({}/{} bytes)", progress, downloaded, total_size.unwrap_or(0));
+    }
+    
+    // 发送完成事件（100%）
+    if let Some(total) = total_size {
+        let progress_info = ModelDownloadProgress {
+            model_name: model_name.clone(),
+            downloaded: total,
+            total: Some(total),
+            progress: 100.0,
+        };
+        let _ = app.emit(&progress_event_name, &progress_info);
     }
 
     file.sync_all()

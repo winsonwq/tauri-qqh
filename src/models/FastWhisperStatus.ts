@@ -12,3 +12,11 @@ export interface ModelInfo {
   downloaded: boolean;
 }
 
+// 模型下载进度信息
+export interface ModelDownloadProgress {
+  model_name: string;
+  downloaded: number;
+  total?: number;
+  progress: number; // 0-100
+}
+
