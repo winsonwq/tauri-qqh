@@ -70,7 +70,7 @@ const Layout = () => {
       <button
         onClick={handleToggleSidePanel}
         className={`fixed bottom-4 z-50 btn btn-circle btn-primary shadow-lg transition-all ${
-          sidePanelOpen ? 'right-[25rem]' : 'right-4'
+          sidePanelOpen ? 'right-[23.5rem]' : 'right-4'
         }`}
         title={sidePanelOpen ? '关闭侧边面板' : '打开侧边面板'}
       >
