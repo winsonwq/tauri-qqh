@@ -2,8 +2,8 @@ import { useState, useEffect, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { openPath } from '@tauri-apps/plugin-opener'
-import { ModelInfo, ModelDownloadProgress } from '../models'
-import { HiXCircle, HiArrowDownTray, HiFolderOpen, HiTrash } from 'react-icons/hi2'
+import { ModelInfo, ModelDownloadProgress, AIConfig } from '../models'
+import { HiXCircle, HiArrowDownTray, HiFolderOpen, HiPencil, HiTrash, HiPlus } from 'react-icons/hi2'
 import { useMessage } from '../componets/Toast'
 
 const SettingsGeneralPage = () => {
@@ -52,7 +52,27 @@ const SettingsGeneralPage = () => {
       {/* Whisper 模型管理 */}
       <div className="card card-border bg-base-100 shadow-sm">
         <div className="card-body">
-          <h2 className="card-title">Whisper 模型管理</h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="card-title">Whisper 模型管理</h2>
+            <div className="flex items-center gap-2">
+              <button
+                className="btn btn-sm"
+                onClick={() => setShowDownloadModal(true)}
+                title="模型下载"
+              >
+                <HiArrowDownTray className="h-4 w-4" />
+                <span className="ml-1">模型下载</span>
+              </button>
+              <button
+                className="btn btn-sm"
+                onClick={handleOpenFolder}
+                title="打开文件夹"
+              >
+                <HiFolderOpen className="h-4 w-4" />
+                <span className="ml-1">打开文件夹</span>
+              </button>
+            </div>
+          </div>
           {loadingModels ? (
             <div className="flex items-center justify-center py-8">
               <span className="loading loading-spinner loading-md"></span>
@@ -76,28 +96,13 @@ const SettingsGeneralPage = () => {
                   ))}
                 </p>
               )}
-              <div className="flex items-center gap-2 mt-4">
-                <button
-                  className="btn"
-                  onClick={() => setShowDownloadModal(true)}
-                  title="模型下载"
-                >
-                  <HiArrowDownTray className="h-4 w-4" />
-                  <span className="ml-1">模型下载</span>
-                </button>
-                <button
-                  className="btn"
-                  onClick={handleOpenFolder}
-                  title="打开文件夹"
-                >
-                  <HiFolderOpen className="h-4 w-4" />
-                  <span className="ml-1">打开文件夹</span>
-                </button>
-              </div>
             </div>
           )}
         </div>
       </div>
+
+      {/* AI 配置管理 */}
+      <AIConfigBlock />
 
       {/* 模型下载弹出框始终挂载以保留下载状态 */}
       <ModelDownloadModal
@@ -105,6 +110,360 @@ const SettingsGeneralPage = () => {
         onClose={() => setShowDownloadModal(false)}
         onModelDownloaded={loadModels}
       />
+    </div>
+  )
+}
+
+// AI 配置管理组件
+const AIConfigBlock = () => {
+  const message = useMessage()
+  const [configs, setConfigs] = useState<AIConfig[]>([])
+  const [loading, setLoading] = useState(false)
+  const [showAddModal, setShowAddModal] = useState(false)
+  const [editingConfig, setEditingConfig] = useState<AIConfig | null>(null)
+  const [deletingConfig, setDeletingConfig] = useState<AIConfig | null>(null)
+
+  // 加载配置列表
+  const loadConfigs = async () => {
+    try {
+      setLoading(true)
+      const configsList = await invoke<AIConfig[]>('get_ai_configs')
+      setConfigs(configsList)
+    } catch (err) {
+      console.error('加载 AI 配置失败:', err)
+      message.error('加载 AI 配置失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadConfigs()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // 删除配置
+  const handleDelete = async (config: AIConfig) => {
+    setDeletingConfig(config)
+  }
+
+  // 确认删除
+  const handleConfirmDelete = async () => {
+    if (!deletingConfig) return
+    try {
+      await invoke('delete_ai_config', { id: deletingConfig.id })
+      message.success('删除成功')
+      setDeletingConfig(null)
+      await loadConfigs()
+    } catch (err) {
+      console.error('删除 AI 配置失败:', err)
+      message.error('删除失败')
+    }
+  }
+
+  return (
+    <div className="card card-border bg-base-100 shadow-sm">
+      <div className="card-body">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="card-title">AI 配置</h2>
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={() => setShowAddModal(true)}
+          >
+            <HiPlus className="h-4 w-4" />
+            <span className="ml-1">添加</span>
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="flex items-center justify-center py-8">
+            <span className="loading loading-spinner loading-md"></span>
+            <span className="ml-2">加载配置列表中...</span>
+          </div>
+        ) : configs.length === 0 ? (
+          <div className="text-center py-8 text-base-content/50">
+            <p>暂无 AI 配置</p>
+            <p className="text-sm mt-2">点击【添加】按钮添加配置</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="table table-zebra w-full">
+              <thead>
+                <tr>
+                  <th>名称</th>
+                  <th>Base URL</th>
+                  <th>API Key</th>
+                  <th>Model</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {configs.map((config) => (
+                  <AIConfigTableRow
+                    key={config.id}
+                    config={config}
+                    onEdit={() => setEditingConfig(config)}
+                    onDelete={() => handleDelete(config)}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* 添加配置弹窗 */}
+      {showAddModal && (
+        <AIConfigModal
+          isOpen={showAddModal}
+          onClose={() => setShowAddModal(false)}
+          onSave={async () => {
+            setShowAddModal(false)
+            await loadConfigs()
+          }}
+        />
+      )}
+
+      {/* 编辑配置弹窗 */}
+      {editingConfig && (
+        <AIConfigModal
+          isOpen={!!editingConfig}
+          config={editingConfig}
+          onClose={() => setEditingConfig(null)}
+          onSave={async () => {
+            setEditingConfig(null)
+            await loadConfigs()
+          }}
+        />
+      )}
+
+      {/* 删除确认弹窗 */}
+      {deletingConfig && (
+        <DeleteConfirmModal
+          isOpen={!!deletingConfig}
+          configName={deletingConfig.name}
+          onClose={() => setDeletingConfig(null)}
+          onConfirm={handleConfirmDelete}
+        />
+      )}
+    </div>
+  )
+}
+
+// AI 配置表格行组件
+interface AIConfigTableRowProps {
+  config: AIConfig
+  onEdit: () => void
+  onDelete: () => void
+}
+
+const AIConfigTableRow = ({
+  config,
+  onEdit,
+  onDelete,
+}: AIConfigTableRowProps) => {
+  return (
+    <tr>
+      <td className="font-medium">{config.name}</td>
+      <td>
+        <div className="max-w-xs truncate" title={config.base_url}>
+          {config.base_url}
+        </div>
+      </td>
+      <td>
+        <div className="font-mono text-sm">
+          {config.api_key.substring(0, 10)}...
+        </div>
+      </td>
+      <td>{config.model}</td>
+      <td>
+        <div className="flex gap-2">
+          <button
+            className="btn btn-sm btn-ghost"
+            onClick={onEdit}
+            title="编辑"
+          >
+            <HiPencil className="h-4 w-4" />
+          </button>
+          <button
+            className="btn btn-sm btn-ghost text-error"
+            onClick={onDelete}
+            title="删除"
+          >
+            <HiTrash className="h-4 w-4" />
+          </button>
+        </div>
+      </td>
+    </tr>
+  )
+}
+
+// AI 配置添加/编辑弹窗
+interface AIConfigModalProps {
+  isOpen: boolean
+  config?: AIConfig | null
+  onClose: () => void
+  onSave: () => void
+}
+
+const AIConfigModal = ({ isOpen, config, onClose, onSave }: AIConfigModalProps) => {
+  const message = useMessage()
+  const isEditMode = !!config
+  const [formData, setFormData] = useState({
+    name: '',
+    base_url: '',
+    api_key: '',
+    model: '',
+  })
+
+  // 当 config 变化时同步 formData
+  useEffect(() => {
+    if (config) {
+      setFormData({
+        name: config.name,
+        base_url: config.base_url,
+        api_key: config.api_key,
+        model: config.model,
+      })
+    } else {
+      setFormData({ name: '', base_url: '', api_key: '', model: '' })
+    }
+  }, [config])
+
+  const handleSave = async () => {
+    if (!formData.name || !formData.base_url || !formData.api_key || !formData.model) {
+      message.error('请填写所有字段')
+      return
+    }
+
+    try {
+      if (isEditMode && config) {
+        await invoke('update_ai_config', {
+          id: config.id,
+          name: formData.name,
+          baseUrl: formData.base_url,
+          apiKey: formData.api_key,
+          model: formData.model,
+        })
+        message.success('更新成功')
+      } else {
+        await invoke('create_ai_config', {
+          name: formData.name,
+          baseUrl: formData.base_url,
+          apiKey: formData.api_key,
+          model: formData.model,
+        })
+        message.success('添加成功')
+        setFormData({ name: '', base_url: '', api_key: '', model: '' })
+      }
+      onSave()
+    } catch (err) {
+      console.error(isEditMode ? '更新 AI 配置失败:' : '添加 AI 配置失败:', err)
+      message.error(isEditMode ? '更新失败' : '添加失败')
+    }
+  }
+
+  if (!isOpen) return null
+
+  return (
+    <div className="modal modal-open">
+      <div className="modal-box">
+        <h3 className="font-bold text-lg mb-4">{isEditMode ? '编辑 AI 配置' : '添加 AI 配置'}</h3>
+
+        <div className="space-y-4">
+          <div>
+            <label className="label">
+              <span className="label-text">名称</span>
+            </label>
+            <input
+              type="text"
+              className="input input-bordered w-full"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              placeholder="配置名称"
+            />
+          </div>
+          <div>
+            <label className="label">
+              <span className="label-text">Base URL</span>
+            </label>
+            <input
+              type="text"
+              className="input input-bordered w-full"
+              value={formData.base_url}
+              onChange={(e) => setFormData({ ...formData, base_url: e.target.value })}
+              placeholder="https://api.openai.com/v1"
+            />
+          </div>
+          <div>
+            <label className="label">
+              <span className="label-text">API Key</span>
+            </label>
+            <input
+              type="password"
+              className="input input-bordered w-full"
+              value={formData.api_key}
+              onChange={(e) => setFormData({ ...formData, api_key: e.target.value })}
+              placeholder="sk-..."
+            />
+          </div>
+          <div>
+            <label className="label">
+              <span className="label-text">Model</span>
+            </label>
+            <input
+              type="text"
+              className="input input-bordered w-full"
+              value={formData.model}
+              onChange={(e) => setFormData({ ...formData, model: e.target.value })}
+              placeholder="gpt-3.5-turbo"
+            />
+          </div>
+        </div>
+
+        <div className="modal-action">
+          <button className="btn" onClick={onClose}>
+            取消
+          </button>
+          <button className="btn btn-primary" onClick={handleSave}>
+            保存
+          </button>
+        </div>
+      </div>
+      <div className="modal-backdrop" onClick={onClose}></div>
+    </div>
+  )
+}
+
+// 删除确认弹窗
+interface DeleteConfirmModalProps {
+  isOpen: boolean
+  configName: string
+  onClose: () => void
+  onConfirm: () => void
+}
+
+const DeleteConfirmModal = ({ isOpen, configName, onClose, onConfirm }: DeleteConfirmModalProps) => {
+  if (!isOpen) return null
+
+  return (
+    <div className="modal modal-open">
+      <div className="modal-box">
+        <h3 className="font-bold text-lg mb-4">确认删除</h3>
+        <p className="mb-4">
+          确定要删除 AI 配置 <span className="font-semibold">"{configName}"</span> 吗？
+        </p>
+        <p className="text-sm text-base-content/70 mb-4">此操作不可恢复。</p>
+        <div className="modal-action">
+          <button className="btn" onClick={onClose}>
+            取消
+          </button>
+          <button className="btn btn-error" onClick={onConfirm}>
+            删除
+          </button>
+        </div>
+      </div>
+      <div className="modal-backdrop" onClick={onClose}></div>
     </div>
   )
 }

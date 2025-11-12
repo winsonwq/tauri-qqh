@@ -77,6 +77,18 @@ pub struct TranscriptionParams {
     pub translate: Option<bool>,
 }
 
+// AI 配置模型（OpenAI 兼容）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AIConfig {
+    pub id: String,
+    pub name: String,
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 // 运行中的任务进程管理器
 #[derive(Clone)]
 pub struct RunningTasks {
@@ -1238,7 +1250,7 @@ async fn download_model(
         };
         
         // 发送进度事件（每 0.5% 或每 512KB 发送一次，确保及时更新）
-        let should_emit = if let Some(total) = total_size {
+        let should_emit = if let Some(_total) = total_size {
             let progress_diff = progress - last_emitted_progress;
             progress_diff >= 0.5 || (downloaded - last_emitted_bytes) >= 512 * 1024
         } else {
@@ -1652,6 +1664,138 @@ async fn create_temp_subtitle_file(
     Ok(subtitle_file.to_string_lossy().to_string())
 }
 
+// 获取所有 AI 配置
+#[tauri::command]
+async fn get_ai_configs(
+    app: tauri::AppHandle,
+) -> Result<Vec<AIConfig>, String> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let db_path = db::get_db_path(&app_data_dir);
+    
+    tokio::task::spawn_blocking(move || {
+        let conn = db::init_database(&db_path)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        db::get_all_ai_configs(&conn)
+            .map_err(|e| format!("无法从数据库读取 AI 配置: {}", e))
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))?
+}
+
+// 创建 AI 配置
+#[tauri::command]
+async fn create_ai_config(
+    name: String,
+    base_url: String,
+    api_key: String,
+    model: String,
+    app: tauri::AppHandle,
+) -> Result<AIConfig, String> {
+    let id = Uuid::new_v4().to_string();
+    let now = Utc::now().to_rfc3339();
+    
+    let config = AIConfig {
+        id: id.clone(),
+        name,
+        base_url,
+        api_key,
+        model,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    
+    let app_data_dir = get_app_data_dir(&app)?;
+    let db_path = db::get_db_path(&app_data_dir);
+    let config_clone = config.clone();
+    
+    tokio::task::spawn_blocking(move || {
+        let conn = db::init_database(&db_path)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        db::create_ai_config(&conn, &config_clone)
+            .map_err(|e| format!("无法保存 AI 配置到数据库: {}", e))?;
+        Ok::<AIConfig, String>(config_clone)
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
+    
+    Ok(config)
+}
+
+// 更新 AI 配置
+#[tauri::command]
+async fn update_ai_config(
+    id: String,
+    name: String,
+    base_url: String,
+    api_key: String,
+    model: String,
+    app: tauri::AppHandle,
+) -> Result<AIConfig, String> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let db_path = db::get_db_path(&app_data_dir);
+    
+    // 先获取现有配置以获取 created_at
+    let id_clone = id.clone();
+    let existing_config = tokio::task::spawn_blocking({
+        let db_path_clone = db_path.clone();
+        move || {
+            let conn = db::init_database(&db_path_clone)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            db::get_ai_config(&conn, &id_clone)
+                .map_err(|e| format!("无法从数据库读取 AI 配置: {}", e))
+        }
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
+    
+    let existing_config = existing_config.ok_or("AI 配置不存在")?;
+    
+    let updated_config = AIConfig {
+        id: id.clone(),
+        name,
+        base_url,
+        api_key,
+        model,
+        created_at: existing_config.created_at,
+        updated_at: Utc::now().to_rfc3339(),
+    };
+    
+    let config_clone = updated_config.clone();
+    let db_path_clone = db_path.clone();
+    
+    tokio::task::spawn_blocking(move || {
+        let conn = db::init_database(&db_path_clone)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        db::update_ai_config(&conn, &config_clone)
+            .map_err(|e| format!("无法更新 AI 配置: {}", e))
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
+    
+    Ok(updated_config)
+}
+
+// 删除 AI 配置
+#[tauri::command]
+async fn delete_ai_config(
+    id: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let db_path = db::get_db_path(&app_data_dir);
+    
+    tokio::task::spawn_blocking(move || {
+        let conn = db::init_database(&db_path)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        db::delete_ai_config(&conn, &id)
+            .map_err(|e| format!("无法删除 AI 配置: {}", e))
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
+    
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1681,6 +1825,10 @@ pub fn run() {
             check_file_exists,
             extract_audio_from_video,
             create_temp_subtitle_file,
+            get_ai_configs,
+            create_ai_config,
+            update_ai_config,
+            delete_ai_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

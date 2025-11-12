@@ -1,7 +1,7 @@
 use rusqlite::{Connection, Result as SqlResult, params};
 use std::path::PathBuf;
 use serde_json;
-use crate::{TranscriptionResource, TranscriptionTask, TranscriptionParams, ResourceType};
+use crate::{TranscriptionResource, TranscriptionTask, TranscriptionParams, ResourceType, AIConfig};
 
 // 获取数据库路径
 pub fn get_db_path(app_data_dir: &PathBuf) -> PathBuf {
@@ -57,6 +57,25 @@ pub fn init_database(db_path: &PathBuf) -> SqlResult<Connection> {
     
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON transcription_tasks(created_at)",
+        [],
+    )?;
+    
+    // 创建 AI 配置表
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS ai_configs (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            base_url TEXT NOT NULL,
+            api_key TEXT NOT NULL,
+            model TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )",
+        [],
+    )?;
+    
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ai_configs_created_at ON ai_configs(created_at)",
         [],
     )?;
     
@@ -324,6 +343,99 @@ pub fn delete_task(conn: &Connection, task_id: &str) -> SqlResult<()> {
     conn.execute(
         "DELETE FROM transcription_tasks WHERE id = ?1",
         params![task_id],
+    )?;
+    Ok(())
+}
+
+// AI 配置 CRUD 操作
+pub fn create_ai_config(conn: &Connection, config: &AIConfig) -> SqlResult<()> {
+    conn.execute(
+        "INSERT INTO ai_configs (id, name, base_url, api_key, model, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            config.id,
+            config.name,
+            config.base_url,
+            config.api_key,
+            config.model,
+            config.created_at,
+            config.updated_at,
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn get_ai_config(conn: &Connection, config_id: &str) -> SqlResult<Option<AIConfig>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, base_url, api_key, model, created_at, updated_at
+         FROM ai_configs WHERE id = ?1"
+    )?;
+    
+    let config_iter = stmt.query_map(params![config_id], |row| {
+        Ok(AIConfig {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            base_url: row.get(2)?,
+            api_key: row.get(3)?,
+            model: row.get(4)?,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
+        })
+    })?;
+    
+    for config in config_iter {
+        return Ok(Some(config?));
+    }
+    Ok(None)
+}
+
+pub fn get_all_ai_configs(conn: &Connection) -> SqlResult<Vec<AIConfig>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, base_url, api_key, model, created_at, updated_at
+         FROM ai_configs
+         ORDER BY created_at DESC"
+    )?;
+    
+    let config_iter = stmt.query_map([], |row| {
+        Ok(AIConfig {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            base_url: row.get(2)?,
+            api_key: row.get(3)?,
+            model: row.get(4)?,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
+        })
+    })?;
+    
+    let mut configs = Vec::new();
+    for config in config_iter {
+        configs.push(config?);
+    }
+    Ok(configs)
+}
+
+pub fn update_ai_config(conn: &Connection, config: &AIConfig) -> SqlResult<()> {
+    conn.execute(
+        "UPDATE ai_configs
+         SET name = ?2, base_url = ?3, api_key = ?4, model = ?5, updated_at = ?6
+         WHERE id = ?1",
+        params![
+            config.id,
+            config.name,
+            config.base_url,
+            config.api_key,
+            config.model,
+            config.updated_at,
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn delete_ai_config(conn: &Connection, config_id: &str) -> SqlResult<()> {
+    conn.execute(
+        "DELETE FROM ai_configs WHERE id = ?1",
+        params![config_id],
     )?;
     Ok(())
 }

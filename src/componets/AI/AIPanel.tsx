@@ -14,7 +14,15 @@ const markdownComponents = {
   p: ({ children }: { children?: React.ReactNode }) => (
     <p className="mb-2 last:mb-0">{children}</p>
   ),
-  code: ({ className, children, ...props }: { className?: string; children?: React.ReactNode; [key: string]: any }) => {
+  code: ({
+    className,
+    children,
+    ...props
+  }: {
+    className?: string
+    children?: React.ReactNode
+    [key: string]: any
+  }) => {
     const isInline = !className
     return isInline ? (
       <code
@@ -38,14 +46,10 @@ const markdownComponents = {
     </pre>
   ),
   ul: ({ children }: { children?: React.ReactNode }) => (
-    <ul className="list-disc list-inside mb-2 space-y-1">
-      {children}
-    </ul>
+    <ul className="list-disc list-inside mb-2 space-y-1">{children}</ul>
   ),
   ol: ({ children }: { children?: React.ReactNode }) => (
-    <ol className="list-decimal list-inside mb-2 space-y-1">
-      {children}
-    </ol>
+    <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>
   ),
   li: ({ children }: { children?: React.ReactNode }) => (
     <li className="ml-4">{children}</li>
@@ -56,19 +60,13 @@ const markdownComponents = {
     </blockquote>
   ),
   h1: ({ children }: { children?: React.ReactNode }) => (
-    <h1 className="text-xl font-bold mb-2 mt-4 first:mt-0">
-      {children}
-    </h1>
+    <h1 className="text-xl font-bold mb-2 mt-4 first:mt-0">{children}</h1>
   ),
   h2: ({ children }: { children?: React.ReactNode }) => (
-    <h2 className="text-lg font-bold mb-2 mt-4 first:mt-0">
-      {children}
-    </h2>
+    <h2 className="text-lg font-bold mb-2 mt-4 first:mt-0">{children}</h2>
   ),
   h3: ({ children }: { children?: React.ReactNode }) => (
-    <h3 className="text-base font-bold mb-2 mt-4 first:mt-0">
-      {children}
-    </h3>
+    <h3 className="text-base font-bold mb-2 mt-4 first:mt-0">{children}</h3>
   ),
   a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
     <a
@@ -92,9 +90,7 @@ const markdownComponents = {
 const renderMessageContent = (content: string) => {
   return (
     <div className="text-sm prose prose-sm max-w-none text-base-content">
-      <ReactMarkdown components={markdownComponents}>
-        {content}
-      </ReactMarkdown>
+      <ReactMarkdown components={markdownComponents}>{content}</ReactMarkdown>
     </div>
   )
 }
@@ -109,7 +105,10 @@ const renderTimestamp = (timestamp: Date) => {
 }
 
 // 获取消息容器样式
-const getMessageContainerClasses = (role: 'user' | 'assistant', isSticky: boolean) => {
+const getMessageContainerClasses = (
+  role: 'user' | 'assistant',
+  isSticky: boolean,
+) => {
   const baseClasses = 'w-full'
   if (role === 'user') {
     return `${baseClasses} bg-base-200 border-b border-base-300 ${
@@ -172,7 +171,7 @@ const AIPanel = () => {
     // 检测哪些消息在视口顶部
     const checkStickyMessages = () => {
       const stickyIds: string[] = []
-      
+
       messageRefs.current.forEach((element, messageId) => {
         const message = messages.find((m) => m.id === messageId)
         if (message && message.role === 'user') {
@@ -204,7 +203,7 @@ const AIPanel = () => {
       scrollContainer.addEventListener('scroll', checkStickyMessages)
       // 初始检查
       setTimeout(checkStickyMessages, 0)
-      
+
       return () => {
         scrollContainer.removeEventListener('scroll', checkStickyMessages)
       }
@@ -212,13 +211,16 @@ const AIPanel = () => {
   }, [messages])
 
   // 注册消息元素的 ref
-  const setMessageRef = useCallback((messageId: string, element: HTMLDivElement | null) => {
-    if (element) {
-      messageRefs.current.set(messageId, element)
-    } else {
-      messageRefs.current.delete(messageId)
-    }
-  }, [])
+  const setMessageRef = useCallback(
+    (messageId: string, element: HTMLDivElement | null) => {
+      if (element) {
+        messageRefs.current.set(messageId, element)
+      } else {
+        messageRefs.current.delete(messageId)
+      }
+    },
+    [],
+  )
 
   const handleSend = (message: string) => {
     // 添加用户消息
@@ -288,8 +290,9 @@ console.log(greet('World'));
         ) : (
           <div className="space-y-0">
             {messages.map((message) => {
-              const isSticky = message.role === 'user' && stickyMessageId === message.id
-              
+              const isSticky =
+                message.role === 'user' && stickyMessageId === message.id
+
               return (
                 <MessageItem
                   key={message.id}
