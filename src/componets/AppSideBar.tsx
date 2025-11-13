@@ -178,7 +178,7 @@ const AppSideBar = ({ onToggleSidebar }: AppSideBarProps) => {
         className="drawer-overlay"
         onClick={onToggleSidebar}
       ></label>
-      <aside className="w-64 h-full bg-base-200 relative overflow-y-auto border-r border-base-300">
+      <aside className="w-56 h-full bg-base-200 relative overflow-y-auto border-r border-base-300">
         {/* Logo 区域 */}
         <div className="flex items-center justify-start h-20 border-b border-base-300 px-4">
           <div className="flex items-center gap-3">
