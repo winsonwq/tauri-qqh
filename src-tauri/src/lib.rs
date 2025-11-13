@@ -2787,6 +2787,173 @@ async fn update_chat_title(
     Ok(())
 }
 
+// 使用 AI 总结 chat 标题
+#[tauri::command]
+async fn summarize_chat_title(
+    chat_id: String,
+    config_id: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let db_path = db::get_db_path(&app_data_dir);
+    
+    // 获取 chat 的所有 messages
+    let messages = tokio::task::spawn_blocking({
+        let db_path_clone = db_path.clone();
+        let chat_id_clone = chat_id.clone();
+        move || {
+            let conn = db::init_database(&db_path_clone)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            db::get_messages_by_chat(&conn, &chat_id_clone)
+                .map_err(|e| format!("无法获取 messages: {}", e))
+        }
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
+    
+    if messages.is_empty() {
+        return Err("Chat 中没有消息，无法生成标题".to_string());
+    }
+    
+    // 获取 AI 配置
+    let ai_config = tokio::task::spawn_blocking({
+        let db_path_clone = db_path.clone();
+        let config_id_clone = config_id.clone();
+        move || {
+            let conn = db::init_database(&db_path_clone)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            
+            // 如果提供了 config_id，使用它；否则使用第一个配置
+            if let Some(cid) = config_id_clone {
+                db::get_ai_config(&conn, &cid)
+                    .map_err(|e| format!("无法从数据库读取 AI 配置: {}", e))
+            } else {
+                let configs = db::get_all_ai_configs(&conn)
+                    .map_err(|e| format!("无法获取 AI 配置列表: {}", e))?;
+                if configs.is_empty() {
+                    Err("没有可用的 AI 配置".to_string())
+                } else {
+                    Ok(Some(configs[0].clone()))
+                }
+            }
+        }
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
+    
+    let ai_config = ai_config.ok_or("AI 配置不存在")?;
+    
+    // 构建消息列表：只包含 user 和 assistant 消息，用于总结
+    let mut chat_messages: Vec<ai::ChatMessage> = messages
+        .iter()
+        .filter(|m| m.role == "user" || m.role == "assistant")
+        .map(|m| ai::ChatMessage {
+            role: m.role.clone(),
+            content: Some(m.content.clone()),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+        })
+        .collect();
+    
+    // 限制消息数量，避免请求过长（最多取前 10 条消息）
+    if chat_messages.len() > 10 {
+        chat_messages = chat_messages[..10].to_vec();
+    }
+    
+    // 添加 system message，要求生成简短标题
+    let system_message = ai::ChatMessage {
+        role: "system".to_string(),
+        content: Some("请根据以下对话内容，生成一个简洁的标题，不超过 20 个字符。只返回标题，不要包含其他内容。".to_string()),
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+    };
+    
+    let mut all_messages = vec![system_message];
+    all_messages.extend(chat_messages);
+    
+    // 构建非流式请求
+    let request = ai::ChatCompletionRequest {
+        model: ai_config.model.clone(),
+        messages: all_messages,
+        tools: None,
+        tool_choice: None,
+        stream: false,
+        temperature: Some(0.3), // 使用较低的温度以获得更稳定的标题
+    };
+    
+    // 构建 URL
+    let url = ai::build_chat_url(&ai_config.base_url);
+    
+    // 创建 HTTP 客户端
+    let client = reqwest::Client::new();
+    
+    // 发送请求
+    let response = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", ai_config.api_key))
+        .header("Content-Type", "application/json")
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| format!("发送请求失败: {}", e))?;
+    
+    // 检查响应状态
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("AI API 返回错误: {} - {}", status, error_text));
+    }
+    
+    // 解析响应
+    let completion_response: ai::ChatCompletionResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("解析响应失败: {}", e))?;
+    
+    // 提取标题
+    let title = completion_response
+        .choices
+        .first()
+        .and_then(|choice| choice.message.content.as_ref())
+        .map(|content| content.trim().to_string())
+        .ok_or("AI 响应中没有内容")?;
+    
+    // 限制标题长度
+    let title = if title.len() > 50 {
+        title.chars().take(50).collect::<String>() + "..."
+    } else {
+        title
+    };
+    
+    // 更新 chat 标题
+    let db_path_clone = db_path.clone();
+    let chat_id_clone = chat_id.clone();
+    let title_clone = title.clone();
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let conn = db::init_database(&db_path_clone)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        
+        let mut chat = db::get_chat(&conn, &chat_id_clone)
+            .map_err(|e| format!("无法获取 chat: {}", e))?
+            .ok_or_else(|| "Chat 不存在".to_string())?;
+        
+        chat.title = title_clone;
+        chat.updated_at = Utc::now().to_rfc3339();
+        
+        db::update_chat(&conn, &chat)
+            .map_err(|e| format!("无法更新 chat: {}", e))?;
+        
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))?
+    .map_err(|e| e)?;
+    
+    Ok(title)
+}
+
 // 删除 chat
 #[tauri::command]
 async fn delete_chat(
@@ -2929,6 +3096,7 @@ pub fn run() {
             get_all_chats,
             get_chat,
             update_chat_title,
+            summarize_chat_title,
             delete_chat,
             get_messages_by_chat,
             save_message,
