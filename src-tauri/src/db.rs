@@ -1,7 +1,7 @@
 use rusqlite::{Connection, Result as SqlResult, params};
 use std::path::PathBuf;
 use serde_json;
-use crate::{TranscriptionResource, TranscriptionTask, TranscriptionParams, ResourceType, AIConfig};
+use crate::{TranscriptionResource, TranscriptionTask, TranscriptionParams, ResourceType, AIConfig, Chat, Message};
 
 // 获取数据库路径
 pub fn get_db_path(app_data_dir: &PathBuf) -> PathBuf {
@@ -76,6 +76,55 @@ pub fn init_database(db_path: &PathBuf) -> SqlResult<Connection> {
     
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_ai_configs_created_at ON ai_configs(created_at)",
+        [],
+    )?;
+    
+    // 创建 chats 表
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS chats (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )",
+        [],
+    )?;
+    
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chats_updated_at ON chats(updated_at DESC)",
+        [],
+    )?;
+    
+    // 创建 messages 表
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS messages (
+            id TEXT PRIMARY KEY,
+            chat_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            tool_calls TEXT,
+            tool_call_id TEXT,
+            name TEXT,
+            reasoning TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+        )",
+        [],
+    )?;
+    
+    // 迁移：如果 messages 表存在但没有 reasoning 字段，则添加
+    let _ = conn.execute(
+        "ALTER TABLE messages ADD COLUMN reasoning TEXT",
+        [],
+    );
+    
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id)",
+        [],
+    )?;
+    
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)",
         [],
     )?;
     
@@ -438,5 +487,164 @@ pub fn delete_ai_config(conn: &Connection, config_id: &str) -> SqlResult<()> {
         params![config_id],
     )?;
     Ok(())
+}
+
+// Chat CRUD 操作
+pub fn create_chat(conn: &Connection, chat: &Chat) -> SqlResult<()> {
+    conn.execute(
+        "INSERT INTO chats (id, title, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![
+            chat.id,
+            chat.title,
+            chat.created_at,
+            chat.updated_at,
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn get_chat(conn: &Connection, chat_id: &str) -> SqlResult<Option<Chat>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, title, created_at, updated_at
+         FROM chats WHERE id = ?1"
+    )?;
+    
+    let chat_iter = stmt.query_map(params![chat_id], |row| {
+        Ok(Chat {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            created_at: row.get(2)?,
+            updated_at: row.get(3)?,
+        })
+    })?;
+    
+    for chat in chat_iter {
+        return Ok(Some(chat?));
+    }
+    Ok(None)
+}
+
+pub fn get_all_chats(conn: &Connection) -> SqlResult<Vec<Chat>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, title, created_at, updated_at
+         FROM chats
+         ORDER BY updated_at DESC"
+    )?;
+    
+    let chat_iter = stmt.query_map([], |row| {
+        Ok(Chat {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            created_at: row.get(2)?,
+            updated_at: row.get(3)?,
+        })
+    })?;
+    
+    let mut chats = Vec::new();
+    for chat in chat_iter {
+        chats.push(chat?);
+    }
+    Ok(chats)
+}
+
+pub fn update_chat(conn: &Connection, chat: &Chat) -> SqlResult<()> {
+    conn.execute(
+        "UPDATE chats
+         SET title = ?2, updated_at = ?3
+         WHERE id = ?1",
+        params![
+            chat.id,
+            chat.title,
+            chat.updated_at,
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn delete_chat(conn: &Connection, chat_id: &str) -> SqlResult<()> {
+    conn.execute(
+        "DELETE FROM chats WHERE id = ?1",
+        params![chat_id],
+    )?;
+    Ok(())
+}
+
+// Message CRUD 操作
+pub fn create_message(conn: &Connection, message: &Message) -> SqlResult<()> {
+    conn.execute(
+        "INSERT INTO messages (id, chat_id, role, content, tool_calls, tool_call_id, name, reasoning, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![
+            message.id,
+            message.chat_id,
+            message.role,
+            message.content,
+            message.tool_calls,
+            message.tool_call_id,
+            message.name,
+            message.reasoning,
+            message.created_at,
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn get_messages_by_chat(conn: &Connection, chat_id: &str) -> SqlResult<Vec<Message>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, chat_id, role, content, tool_calls, tool_call_id, name, reasoning, created_at
+         FROM messages
+         WHERE chat_id = ?1
+         ORDER BY created_at ASC"
+    )?;
+    
+    let message_iter = stmt.query_map(params![chat_id], |row| {
+        Ok(Message {
+            id: row.get(0)?,
+            chat_id: row.get(1)?,
+            role: row.get(2)?,
+            content: row.get(3)?,
+            tool_calls: row.get(4)?,
+            tool_call_id: row.get(5)?,
+            name: row.get(6)?,
+            reasoning: row.get(7)?,
+            created_at: row.get(8)?,
+        })
+    })?;
+    
+    let mut messages = Vec::new();
+    for message in message_iter {
+        messages.push(message?);
+    }
+    Ok(messages)
+}
+
+pub fn get_last_message_by_chat(conn: &Connection, chat_id: &str) -> SqlResult<Option<Message>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, chat_id, role, content, tool_calls, tool_call_id, name, reasoning, created_at
+         FROM messages
+         WHERE chat_id = ?1
+         ORDER BY created_at DESC
+         LIMIT 1"
+    )?;
+    
+    let message_iter = stmt.query_map(params![chat_id], |row| {
+        Ok(Message {
+            id: row.get(0)?,
+            chat_id: row.get(1)?,
+            role: row.get(2)?,
+            content: row.get(3)?,
+            tool_calls: row.get(4)?,
+            tool_call_id: row.get(5)?,
+            name: row.get(6)?,
+            reasoning: row.get(7)?,
+            created_at: row.get(8)?,
+        })
+    })?;
+    
+    for message in message_iter {
+        return Ok(Some(message?));
+    }
+    Ok(None)
 }
 

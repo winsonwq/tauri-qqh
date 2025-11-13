@@ -93,6 +93,39 @@ pub struct AIConfig {
     pub updated_at: String,
 }
 
+// Chat 模型
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Chat {
+    pub id: String,
+    pub title: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+// Message 模型
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Message {
+    pub id: String,
+    pub chat_id: String,
+    pub role: String, // "user" | "assistant" | "tool"
+    pub content: String,
+    pub tool_calls: Option<String>, // JSON string
+    pub tool_call_id: Option<String>,
+    pub name: Option<String>, // tool name
+    pub reasoning: Option<String>, // thinking/reasoning 内容
+    pub created_at: String,
+}
+
+// Chat 列表项（包含最后消息时间）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ChatListItem {
+    pub id: String,
+    pub title: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_message_at: Option<String>,
+}
+
 // MCP HTTP 传输配置
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MCPHTTPTransport {
@@ -258,6 +291,41 @@ impl RunningExtractions {
     pub async fn contains(&self, resource_id: &str) -> bool {
         let extractions = self.extractions.lock().await;
         extractions.contains_key(resource_id)
+    }
+}
+
+// 运行中的流式任务管理器
+#[derive(Clone)]
+pub struct RunningStreams {
+    // 存储 event_id -> AbortHandle 任务句柄
+    streams: Arc<Mutex<HashMap<String, tokio::task::AbortHandle>>>,
+}
+
+impl RunningStreams {
+    pub fn new() -> Self {
+        Self {
+            streams: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub async fn insert(&self, event_id: String, handle: tokio::task::AbortHandle) {
+        let mut streams = self.streams.lock().await;
+        streams.insert(event_id, handle);
+    }
+
+    pub async fn remove(&self, event_id: &str) -> Option<tokio::task::AbortHandle> {
+        let mut streams = self.streams.lock().await;
+        streams.remove(event_id)
+    }
+
+    pub async fn abort(&self, event_id: &str) -> bool {
+        let mut streams = self.streams.lock().await;
+        if let Some(handle) = streams.remove(event_id) {
+            handle.abort();
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -2070,6 +2138,7 @@ async fn chat_completion(
     tools: Option<Vec<MCPTool>>,
     system_message: Option<String>,
     app: tauri::AppHandle,
+    streams: State<'_, RunningStreams>,
 ) -> Result<String, String> {
     // 获取 AI 配置
     let app_data_dir = get_app_data_dir(&app)?;
@@ -2118,12 +2187,19 @@ async fn chat_completion(
     // 构建请求
     let request = ai::ChatCompletionRequest {
         model: ai_config.model.clone(),
-        messages: chat_messages,
-        tools: openai_tools,
+        messages: chat_messages.clone(),
+        tools: openai_tools.clone(),
         tool_choice: Some("auto".to_string()),
         stream: true,
         temperature: Some(0.7),
     };
+    
+    eprintln!("[AI Stream] 准备发送请求");
+    eprintln!("[AI Stream] URL: {}", ai::build_chat_url(&ai_config.base_url));
+    eprintln!("[AI Stream] Model: {}", ai_config.model);
+    eprintln!("[AI Stream] Messages 数量: {}", chat_messages.len());
+    eprintln!("[AI Stream] Tools 数量: {}", openai_tools.as_ref().map(|t| t.len()).unwrap_or(0));
+    eprintln!("[AI Stream] Request JSON: {}", serde_json::to_string(&request).unwrap_or_default());
     
     // 构建 URL
     let url = ai::build_chat_url(&ai_config.base_url);
@@ -2132,14 +2208,35 @@ async fn chat_completion(
     let client = reqwest::Client::new();
     
     // 发送请求
+    eprintln!("[AI Stream] 发送 HTTP POST 请求到: {}", url);
+    eprintln!("[AI Stream] Base URL: {}", ai_config.base_url);
+    eprintln!("[AI Stream] API Key 前缀: {}", if ai_config.api_key.len() > 10 { &ai_config.api_key[..10] } else { "too short" });
+    
     let response = client
         .post(&url)
         .header("Authorization", format!("Bearer {}", ai_config.api_key))
         .header("Content-Type", "application/json")
+        .header("Accept", "text/event-stream")
         .json(&request)
         .send()
         .await
-        .map_err(|e| format!("发送请求失败: {}", e))?;
+        .map_err(|e| {
+            eprintln!("[AI Stream] 发送请求失败: {}", e);
+            format!("发送请求失败: {}", e)
+        })?;
+    
+    eprintln!("[AI Stream] 收到响应，状态码: {}", response.status());
+    eprintln!("[AI Stream] 响应头: {:#?}", response.headers());
+    
+    // 检查响应状态
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response.text().await.unwrap_or_default();
+        eprintln!("[AI Stream] 响应失败，状态码: {}, 错误内容: {}", status, error_text);
+        eprintln!("[AI Stream] 使用的 URL: {}", url);
+        eprintln!("[AI Stream] 请检查 base_url 配置是否正确，应该是类似 https://api.openai.com/v1 的格式");
+        return Err(format!("AI API 返回错误: {} - {}\n使用的 URL: {}", status, error_text, url));
+    }
     
     // 生成事件 ID
     let event_id = Uuid::new_v4().to_string();
@@ -2156,125 +2253,224 @@ async fn chat_completion(
     // 在后台任务中处理流
     let app_clone = app.clone();
     let event_name_clone = event_name.clone();
-    tokio::spawn(async move {
+    let streams_clone = streams.inner().clone();
+    let handle = tokio::spawn(async move {
+        eprintln!("[AI Stream] 开始接收流式响应，事件 ID: {}", event_id_clone);
         while let Some(chunk_result) = stream.next().await {
-            if let Ok(chunk) = chunk_result {
-                let text = String::from_utf8_lossy(chunk.as_ref());
-                buffer.push_str(&text);
-                
-                // 按行处理 SSE 数据
-                while let Some(newline_pos) = buffer.find('\n') {
-                    let line = buffer[..newline_pos].trim().to_string();
-                    buffer = buffer[newline_pos + 1..].to_string();
+            match chunk_result {
+                Ok(chunk) => {
+                    let text = String::from_utf8_lossy(chunk.as_ref());
+                    eprintln!("[AI Stream] 收到原始数据块: {}", text);
+                    buffer.push_str(&text);
                     
-                    if line.starts_with("data: ") {
-                        let data = &line[6..];
-                        if data == "[DONE]" {
-                            // 流结束
-                            let _ = app_clone.emit(&event_name_clone, &json!({
-                                "type": "done",
-                                "event_id": event_id_clone
-                            }));
-                            return;
-                        }
+                    // 按行处理 SSE 数据
+                    while let Some(newline_pos) = buffer.find('\n') {
+                        let line = buffer[..newline_pos].trim().to_string();
+                        buffer = buffer[newline_pos + 1..].to_string();
                         
-                        // 解析 JSON
-                        if let Ok(chunk_data) = serde_json::from_str::<ai::ChatCompletionChunk>(data) {
-                            if let Some(choice) = chunk_data.choices.first() {
-                                let delta = &choice.delta;
-                                
-                                // 处理内容增量
-                                if let Some(content) = &delta.content {
-                                    let _ = app_clone.emit(&event_name_clone, &json!({
-                                        "type": "content",
-                                        "content": content,
-                                        "event_id": event_id_clone
-                                    }));
+                        eprintln!("[AI Stream] 处理行: {}", line);
+                        
+                        if line.starts_with("data: ") {
+                            let data = &line[6..];
+                            eprintln!("[AI Stream] SSE 数据: {}", data);
+                            
+                            if data == "[DONE]" {
+                                // 流结束
+                                eprintln!("[AI Stream] 收到 [DONE]，流结束");
+                                eprintln!("[AI Stream] 发送完成事件，事件名称: {}", event_name_clone);
+                                let emit_result = app_clone.emit(&event_name_clone, &json!({
+                                    "type": "done",
+                                    "event_id": event_id_clone
+                                }));
+                                if let Err(e) = emit_result {
+                                    eprintln!("[AI Stream] 发送完成事件失败: {}", e);
+                                } else {
+                                    eprintln!("[AI Stream] 完成事件发送成功");
                                 }
+                                // 清理流式任务
+                                streams_clone.remove(&event_id_clone).await;
+                                return;
+                            }
+                            
+                            // 解析 JSON
+                            match serde_json::from_str::<ai::ChatCompletionChunk>(data) {
+                                Ok(chunk_data) => {
+                                    eprintln!("[AI Stream] 解析成功，chunk: {:#?}", chunk_data);
+                                    if let Some(choice) = chunk_data.choices.first() {
+                                        let delta = &choice.delta;
+                                        
+                                        // 处理内容增量
+                                        if let Some(content) = &delta.content {
+                                            eprintln!("[AI Stream] 发送内容: {}", content);
+                                            eprintln!("[AI Stream] 事件名称: {}", event_name_clone);
+                                            let emit_result = app_clone.emit(&event_name_clone, &json!({
+                                                "type": "content",
+                                                "content": content,
+                                                "event_id": event_id_clone
+                                            }));
+                                            if let Err(e) = emit_result {
+                                                eprintln!("[AI Stream] 发送事件失败: {}", e);
+                                            } else {
+                                                eprintln!("[AI Stream] 事件发送成功");
+                                            }
+                                        }
+                                        
+                                        // 处理 thinking/reasoning 内容
+                                        if let Some(reasoning) = &delta.reasoning {
+                                            eprintln!("[AI Stream] 发送 reasoning: {}", reasoning);
+                                            let emit_result = app_clone.emit(&event_name_clone, &json!({
+                                                "type": "reasoning",
+                                                "content": reasoning,
+                                                "event_id": event_id_clone
+                                            }));
+                                            if let Err(e) = emit_result {
+                                                eprintln!("[AI Stream] 发送 reasoning 事件失败: {}", e);
+                                            }
+                                        }
+                                        
+                                        // 处理工具调用
+                                        if let Some(tool_calls) = &delta.tool_calls {
+                                            eprintln!("[AI Stream] 收到工具调用增量: {:#?}", tool_calls);
+                                            for tool_call_chunk in tool_calls {
+                                                if let Some(index) = tool_call_chunk.index {
+                                                    let tool_call = current_tool_calls
+                                                        .entry(index)
+                                                        .or_insert_with(|| ai::ToolCallChunk {
+                                                            index: Some(index),
+                                                            id: None,
+                                                            call_type: None,
+                                                            function: None,
+                                                        });
+                                                    
+                                                    if let Some(id) = &tool_call_chunk.id {
+                                                        tool_call.id = Some(id.clone());
+                                                    }
+                                                    if let Some(call_type) = &tool_call_chunk.call_type {
+                                                        tool_call.call_type = Some(call_type.clone());
+                                                    }
+                                                    if let Some(function) = &tool_call_chunk.function {
+                                                        let func = tool_call.function.get_or_insert_with(|| ai::FunctionCallChunk {
+                                                            name: None,
+                                                            arguments: None,
+                                                        });
+                                                        if let Some(name) = &function.name {
+                                                            func.name = Some(name.clone());
+                                                        }
+                                                        if let Some(args) = &function.arguments {
+                                                            func.arguments = Some(
+                                                                func.arguments.as_ref()
+                                                                    .map(|a| format!("{}{}", a, args))
+                                                                    .unwrap_or_else(|| args.clone())
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                 
-                                // 处理工具调用
-                                if let Some(tool_calls) = &delta.tool_calls {
-                                    for tool_call_chunk in tool_calls {
-                                        if let Some(index) = tool_call_chunk.index {
-                                            let tool_call = current_tool_calls
-                                                .entry(index)
-                                                .or_insert_with(|| ai::ToolCallChunk {
-                                                    index: Some(index),
-                                                    id: None,
-                                                    call_type: None,
-                                                    function: None,
-                                                });
-                                            
-                                            if let Some(id) = &tool_call_chunk.id {
-                                                tool_call.id = Some(id.clone());
-                                            }
-                                            if let Some(call_type) = &tool_call_chunk.call_type {
-                                                tool_call.call_type = Some(call_type.clone());
-                                            }
-                                            if let Some(function) = &tool_call_chunk.function {
-                                                let func = tool_call.function.get_or_insert_with(|| ai::FunctionCallChunk {
-                                                    name: None,
-                                                    arguments: None,
-                                                });
-                                                if let Some(name) = &function.name {
-                                                    func.name = Some(name.clone());
+                                        // 如果完成，发送工具调用
+                                        if let Some(finish_reason) = &choice.finish_reason {
+                                            eprintln!("[AI Stream] finish_reason: {}", finish_reason);
+                                            if finish_reason == "tool_calls" && !current_tool_calls.is_empty() {
+                                                eprintln!("[AI Stream] 发送完整工具调用，数量: {}", current_tool_calls.len());
+                                                let tool_calls: Vec<serde_json::Value> = current_tool_calls
+                                                    .values()
+                                                    .map(|tc| {
+                                                        json!({
+                                                            "id": tc.id.as_ref().unwrap_or(&"".to_string()),
+                                                            "type": tc.call_type.as_ref().unwrap_or(&"function".to_string()),
+                                                            "function": {
+                                                                "name": tc.function.as_ref()
+                                                                    .and_then(|f| f.name.as_ref())
+                                                                    .unwrap_or(&"".to_string()),
+                                                                "arguments": tc.function.as_ref()
+                                                                    .and_then(|f| f.arguments.as_ref())
+                                                                    .unwrap_or(&"".to_string()),
+                                                            }
+                                                        })
+                                                    })
+                                                    .collect();
+                                                
+                                                eprintln!("[AI Stream] 工具调用 JSON: {}", serde_json::to_string(&tool_calls).unwrap_or_default());
+                                                eprintln!("[AI Stream] 发送工具调用事件，事件名称: {}", event_name_clone);
+                                                let emit_result = app_clone.emit(&event_name_clone, &json!({
+                                                    "type": "tool_calls",
+                                                    "tool_calls": tool_calls,
+                                                    "event_id": event_id_clone
+                                                }));
+                                                if let Err(e) = emit_result {
+                                                    eprintln!("[AI Stream] 发送工具调用事件失败: {}", e);
+                                                } else {
+                                                    eprintln!("[AI Stream] 工具调用事件发送成功");
                                                 }
-                                                if let Some(args) = &function.arguments {
-                                                    func.arguments = Some(
-                                                        func.arguments.as_ref()
-                                                            .map(|a| format!("{}{}", a, args))
-                                                            .unwrap_or_else(|| args.clone())
-                                                    );
+                                                current_tool_calls.clear();
+                                            } else if finish_reason != "tool_calls" {
+                                                // 正常完成
+                                                eprintln!("[AI Stream] 正常完成，finish_reason: {}", finish_reason);
+                                                eprintln!("[AI Stream] 发送完成事件，事件名称: {}", event_name_clone);
+                                                let emit_result = app_clone.emit(&event_name_clone, &json!({
+                                                    "type": "done",
+                                                    "event_id": event_id_clone
+                                                }));
+                                                if let Err(e) = emit_result {
+                                                    eprintln!("[AI Stream] 发送完成事件失败: {}", e);
+                                                } else {
+                                                    eprintln!("[AI Stream] 完成事件发送成功");
                                                 }
+                                                // 清理流式任务
+                                                streams_clone.remove(&event_id_clone).await;
                                             }
                                         }
                                     }
                                 }
-                                
-                                // 如果完成，发送工具调用
-                                if let Some(finish_reason) = &choice.finish_reason {
-                                    if finish_reason == "tool_calls" && !current_tool_calls.is_empty() {
-                                        let tool_calls: Vec<serde_json::Value> = current_tool_calls
-                                            .values()
-                                            .map(|tc| {
-                                                json!({
-                                                    "id": tc.id.as_ref().unwrap_or(&"".to_string()),
-                                                    "type": tc.call_type.as_ref().unwrap_or(&"function".to_string()),
-                                                    "function": {
-                                                        "name": tc.function.as_ref()
-                                                            .and_then(|f| f.name.as_ref())
-                                                            .unwrap_or(&"".to_string()),
-                                                        "arguments": tc.function.as_ref()
-                                                            .and_then(|f| f.arguments.as_ref())
-                                                            .unwrap_or(&"".to_string()),
-                                                    }
-                                                })
-                                            })
-                                            .collect();
-                                        
-                                        let _ = app_clone.emit(&event_name_clone, &json!({
-                                            "type": "tool_calls",
-                                            "tool_calls": tool_calls,
-                                            "event_id": event_id_clone
-                                        }));
-                                        current_tool_calls.clear();
-                                    } else if finish_reason != "tool_calls" {
-                                        // 正常完成
-                                        let _ = app_clone.emit(&event_name_clone, &json!({
-                                            "type": "done",
-                                            "event_id": event_id_clone
-                                        }));
-                                    }
+                                Err(e) => {
+                                    eprintln!("[AI Stream] JSON 解析失败: {}, 原始数据: {}", e, data);
                                 }
                             }
                         }
                     }
                 }
+                Err(e) => {
+                    eprintln!("[AI Stream] 读取数据块失败: {}", e);
+                }
             }
         }
+        eprintln!("[AI Stream] 流处理结束");
+        // 清理流式任务
+        streams_clone.remove(&event_id_clone).await;
     });
     
+    // 存储 AbortHandle 以便可以停止任务
+    streams.insert(event_id.clone(), handle.abort_handle()).await;
+    
     Ok(event_id)
+}
+
+// 停止 AI 流式对话
+#[tauri::command]
+async fn stop_chat_completion(
+    event_id: String,
+    streams: State<'_, RunningStreams>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    eprintln!("[AI Stream] 收到停止请求，事件 ID: {}", event_id);
+    
+    // 停止流式任务
+    if streams.abort(&event_id).await {
+        eprintln!("[AI Stream] 已停止流式任务: {}", event_id);
+        
+        // 发送停止完成事件
+        let event_name = format!("ai-chat-stream-{}", event_id);
+        let _ = app.emit(&event_name, &json!({
+            "type": "stopped",
+            "event_id": event_id
+        }));
+        
+        Ok(())
+    } else {
+        eprintln!("[AI Stream] 未找到流式任务: {}", event_id);
+        Err("未找到指定的流式任务".to_string())
+    }
 }
 
 // 执行 MCP 工具调用
@@ -2466,6 +2662,226 @@ async fn execute_mcp_tool_call(
     }
 }
 
+// 创建新 chat
+#[tauri::command]
+async fn create_chat(
+    title: String,
+    app: tauri::AppHandle,
+) -> Result<Chat, String> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let db_path = db::get_db_path(&app_data_dir);
+    
+    let chat = tokio::task::spawn_blocking(move || {
+        let conn = db::init_database(&db_path)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        
+        let chat_id = Uuid::new_v4().to_string();
+        let now = Utc::now().to_rfc3339();
+        
+        let chat = Chat {
+            id: chat_id.clone(),
+            title: if title.is_empty() { "新话题".to_string() } else { title },
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        };
+        
+        db::create_chat(&conn, &chat)
+            .map_err(|e| format!("无法创建 chat: {}", e))?;
+        
+        Ok(chat)
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))?;
+    
+    chat
+}
+
+// 获取所有 chats（包含最后消息时间）
+#[tauri::command]
+async fn get_all_chats(
+    app: tauri::AppHandle,
+) -> Result<Vec<ChatListItem>, String> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let db_path = db::get_db_path(&app_data_dir);
+    
+    let chats = tokio::task::spawn_blocking(move || {
+        let conn = db::init_database(&db_path)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        
+        let all_chats = db::get_all_chats(&conn)
+            .map_err(|e| format!("无法获取 chats: {}", e))?;
+        
+        let mut chat_items = Vec::new();
+        for chat in all_chats {
+            let last_message = db::get_last_message_by_chat(&conn, &chat.id)
+                .map_err(|e| format!("无法获取最后消息: {}", e))?;
+            
+            chat_items.push(ChatListItem {
+                id: chat.id,
+                title: chat.title,
+                created_at: chat.created_at,
+                updated_at: chat.updated_at,
+                last_message_at: last_message.map(|m| m.created_at),
+            });
+        }
+        
+        Ok(chat_items)
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))?;
+    
+    chats
+}
+
+// 获取单个 chat
+#[tauri::command]
+async fn get_chat(
+    chat_id: String,
+    app: tauri::AppHandle,
+) -> Result<Option<Chat>, String> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let db_path = db::get_db_path(&app_data_dir);
+    
+    let chat = tokio::task::spawn_blocking(move || {
+        let conn = db::init_database(&db_path)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        db::get_chat(&conn, &chat_id)
+            .map_err(|e| format!("无法获取 chat: {}", e))
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))?;
+    
+    chat
+}
+
+// 更新 chat 标题
+#[tauri::command]
+async fn update_chat_title(
+    chat_id: String,
+    title: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let db_path = db::get_db_path(&app_data_dir);
+    
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let conn = db::init_database(&db_path)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        
+        let mut chat = db::get_chat(&conn, &chat_id)
+            .map_err(|e| format!("无法获取 chat: {}", e))?
+            .ok_or_else(|| "Chat 不存在".to_string())?;
+        
+        chat.title = title;
+        chat.updated_at = Utc::now().to_rfc3339();
+        
+        db::update_chat(&conn, &chat)
+            .map_err(|e| format!("无法更新 chat: {}", e))?;
+        
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))?
+    .map_err(|e| e)?;
+    
+    Ok(())
+}
+
+// 删除 chat
+#[tauri::command]
+async fn delete_chat(
+    chat_id: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let db_path = db::get_db_path(&app_data_dir);
+    
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let conn = db::init_database(&db_path)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        db::delete_chat(&conn, &chat_id)
+            .map_err(|e| format!("无法删除 chat: {}", e))?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))?
+    .map_err(|e| e)?;
+    
+    Ok(())
+}
+
+// 获取 chat 的所有 messages
+#[tauri::command]
+async fn get_messages_by_chat(
+    chat_id: String,
+    app: tauri::AppHandle,
+) -> Result<Vec<Message>, String> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let db_path = db::get_db_path(&app_data_dir);
+    
+    let messages = tokio::task::spawn_blocking(move || {
+        let conn = db::init_database(&db_path)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        db::get_messages_by_chat(&conn, &chat_id)
+            .map_err(|e| format!("无法获取 messages: {}", e))
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))?;
+    
+    messages
+}
+
+// 保存 message
+#[tauri::command]
+async fn save_message(
+    chat_id: String,
+    role: String,
+    content: String,
+    tool_calls: Option<String>,
+    tool_call_id: Option<String>,
+    name: Option<String>,
+    reasoning: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<Message, String> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let db_path = db::get_db_path(&app_data_dir);
+    
+    let message = tokio::task::spawn_blocking(move || {
+        let conn = db::init_database(&db_path)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        
+        let message_id = Uuid::new_v4().to_string();
+        let now = Utc::now().to_rfc3339();
+        
+        let message = Message {
+            id: message_id.clone(),
+            chat_id: chat_id.clone(),
+            role,
+            content,
+            tool_calls,
+            tool_call_id,
+            name,
+            reasoning,
+            created_at: now.clone(),
+        };
+        
+        db::create_message(&conn, &message)
+            .map_err(|e| format!("无法保存 message: {}", e))?;
+        
+        // 更新 chat 的 updated_at
+        if let Ok(Some(mut chat)) = db::get_chat(&conn, &chat_id) {
+            chat.updated_at = now;
+            let _ = db::update_chat(&conn, &chat);
+        }
+        
+        Ok(message)
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))?;
+    
+    message
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -2474,6 +2890,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .manage(RunningTasks::new())
         .manage(RunningExtractions::new())
+        .manage(RunningStreams::new())
         .invoke_handler(tauri::generate_handler![
             create_transcription_resource,
             create_transcription_task,
@@ -2506,7 +2923,15 @@ pub fn run() {
             delete_mcp_config,
             test_mcp_connection,
             chat_completion,
+            stop_chat_completion,
             execute_mcp_tool_call,
+            create_chat,
+            get_all_chats,
+            get_chat,
+            update_chat_title,
+            delete_chat,
+            get_messages_by_chat,
+            save_message,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

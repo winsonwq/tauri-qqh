@@ -62,9 +62,11 @@ pub struct ChatCompletionRequest {
 // Chat completion 流式响应块
 #[derive(Debug, Deserialize)]
 pub struct ChatCompletionChunk {
+    #[allow(dead_code)]
     pub id: String,
     pub choices: Vec<ChoiceChunk>,
     #[serde(default)]
+    #[allow(dead_code)]
     pub created: Option<u64>,
 }
 
@@ -73,6 +75,7 @@ pub struct ChatCompletionChunk {
 pub struct ChoiceChunk {
     pub delta: DeltaChunk,
     #[serde(default)]
+    #[allow(dead_code)]
     pub index: Option<u32>,
     #[serde(default)]
     pub finish_reason: Option<String>,
@@ -82,9 +85,12 @@ pub struct ChoiceChunk {
 #[derive(Debug, Deserialize)]
 pub struct DeltaChunk {
     #[serde(default)]
+    #[allow(dead_code)]
     pub role: Option<String>,
     #[serde(default)]
     pub content: Option<String>,
+    #[serde(default)]
+    pub reasoning: Option<String>, // thinking/reasoning 内容（如 deepseek r1）
     #[serde(default)]
     pub tool_calls: Option<Vec<ToolCallChunk>>,
 }
@@ -127,6 +133,18 @@ pub fn mcp_tool_to_openai_tool(mcp_tool: &crate::MCPTool) -> ToolDefinition {
 // 构建流式请求 URL
 pub fn build_chat_url(base_url: &str) -> String {
     let base = base_url.trim_end_matches('/');
+    
+    // 如果 base_url 已经包含了 /chat/completions 或 /v1/chat/completions，直接返回
+    if base.contains("/chat/completions") {
+        return base.to_string();
+    }
+    
+    // 如果 base_url 已经包含了 /v1，则只添加 /chat/completions
+    if base.ends_with("/v1") {
+        return format!("{}/chat/completions", base);
+    }
+    
+    // 否则添加 /v1/chat/completions
     format!("{}/v1/chat/completions", base)
 }
 

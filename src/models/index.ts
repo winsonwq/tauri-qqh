@@ -5,4 +5,5 @@ export * from './TranscriptionResult';
 export * from './AIConfig';
 export * from './MCPConfig';
 export * from './MCPTool';
+export * from './Chat';
 

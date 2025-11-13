@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { FaPlus, FaPaperclip, FaSearch, FaArrowUp } from 'react-icons/fa'
+import { FaPlus, FaPaperclip, FaSearch, FaArrowUp, FaStop } from 'react-icons/fa'
 import RichTextEditor from './RichTextEditor'
 import { MentionOption } from './MentionPlugin'
 import { AIConfig } from '../../models'
@@ -9,6 +9,8 @@ import Select from '../Select'
 interface AIMessageInputProps {
   onSend?: (message: string, configId?: string) => void
   placeholder?: string
+  isStreaming?: boolean
+  onStop?: () => void
 }
 
 // 示例的 mention 选项（可以根据实际需求替换为 API 调用）
@@ -17,6 +19,8 @@ const defaultMentionOptions: MentionOption[] = []
 const AIMessageInput = ({
   onSend,
   placeholder = '在这里输入消息，按 Enter 发送...',
+  isStreaming = false,
+  onStop,
 }: AIMessageInputProps) => {
   const [configs, setConfigs] = useState<AIConfig[]>([])
   const [selectedConfigId, setSelectedConfigId] = useState<string>('')
@@ -135,20 +139,34 @@ const AIMessageInput = ({
           </button>
         </div>
 
-        {/* 右侧发送按钮 */}
+        {/* 右侧发送/停止按钮 */}
         <div className="flex items-center">
-          <button
-            onClick={() => {
-              // 发送按钮点击时，通过 Enter 键模拟发送
-              // 注意：由于 RichTextEditor 已经处理了 Enter 键发送，
-              // 这个按钮主要用于视觉提示，实际发送通过 Enter 键触发
-              // 如果需要按钮也能发送，需要将编辑器实例通过 ref 暴露出来
-            }}
-            className="btn btn-primary btn-xs btn-circle"
-            title="发送（按 Enter 发送）"
-          >
-            <FaArrowUp className="w-4 h-4" />
-          </button>
+          {isStreaming ? (
+            <button
+              onClick={() => {
+                if (onStop) {
+                  onStop()
+                }
+              }}
+              className="btn btn-error btn-xs btn-circle"
+              title="停止生成"
+            >
+              <FaStop className="w-4 h-4" />
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                // 发送按钮点击时，通过 Enter 键模拟发送
+                // 注意：由于 RichTextEditor 已经处理了 Enter 键发送，
+                // 这个按钮主要用于视觉提示，实际发送通过 Enter 键触发
+                // 如果需要按钮也能发送，需要将编辑器实例通过 ref 暴露出来
+              }}
+              className="btn btn-primary btn-xs btn-circle"
+              title="发送（按 Enter 发送）"
+            >
+              <FaArrowUp className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
     </div>
