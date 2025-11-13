@@ -396,6 +396,20 @@ pub fn delete_task(conn: &Connection, task_id: &str) -> SqlResult<()> {
     Ok(())
 }
 
+pub fn delete_tasks_by_resource(conn: &Connection, resource_id: &str) -> SqlResult<Vec<String>> {
+    // 先获取所有任务ID，以便返回给调用者用于删除结果文件
+    let tasks = get_tasks_by_resource(conn, resource_id)?;
+    let task_ids: Vec<String> = tasks.iter().map(|t| t.id.clone()).collect();
+    
+    // 删除所有关联的任务
+    conn.execute(
+        "DELETE FROM transcription_tasks WHERE resource_id = ?1",
+        params![resource_id],
+    )?;
+    
+    Ok(task_ids)
+}
+
 // AI 配置 CRUD 操作
 pub fn create_ai_config(conn: &Connection, config: &AIConfig) -> SqlResult<()> {
     conn.execute(

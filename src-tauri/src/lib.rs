@@ -1128,7 +1128,7 @@ async fn delete_transcription_resource(
     let db_path = db::get_db_path(&app_data_dir);
     
     tokio::task::spawn_blocking(move || {
-        let conn = db::init_database(&db_path)
+        let mut conn = db::init_database(&db_path)
             .map_err(|e| format!("无法初始化数据库: {}", e))?;
         
         // 检查资源是否存在
@@ -1138,10 +1138,35 @@ async fn delete_transcription_resource(
             return Err(format!("转写资源不存在: {}", resource_id));
         }
         
-        db::delete_resource(&conn, &resource_id)
+        // 先获取所有关联的任务，以便删除它们的结果文件
+        let tasks = db::get_tasks_by_resource(&conn, &resource_id)
+            .map_err(|e| format!("无法查询关联任务: {}", e))?;
+        
+        // 使用事务保护数据库操作
+        let tx = conn.transaction()
+            .map_err(|e| format!("无法开始事务: {}", e))?;
+        
+        // 在事务中删除所有关联的任务
+        db::delete_tasks_by_resource(&tx, &resource_id)
+            .map_err(|e| format!("无法删除关联任务: {}", e))?;
+        
+        // 在事务中删除资源
+        db::delete_resource(&tx, &resource_id)
             .map_err(|e| format!("无法删除资源: {}", e))?;
         
-        // 注意：不删除关联的任务，任务可以独立存在
+        // 提交事务
+        tx.commit()
+            .map_err(|e| format!("无法提交事务: {}", e))?;
+        
+        // 事务成功后，删除所有任务的结果文件（文件删除失败不影响数据库操作）
+        for task in &tasks {
+            if let Some(ref result_path) = task.result {
+                let result_file = PathBuf::from(result_path);
+                if result_file.exists() {
+                    let _ = std::fs::remove_file(&result_file);
+                }
+            }
+        }
         
         Ok(())
     })
