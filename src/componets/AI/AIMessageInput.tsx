@@ -1,27 +1,55 @@
+import { useState, useEffect, useMemo } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import { FaPlus, FaPaperclip, FaSearch, FaArrowUp } from 'react-icons/fa'
 import RichTextEditor from './RichTextEditor'
 import { MentionOption } from './MentionPlugin'
+import { AIConfig } from '../../models'
+import Select from '../Select'
 
 interface AIMessageInputProps {
-  onSend?: (message: string) => void
+  onSend?: (message: string, configId?: string) => void
   placeholder?: string
 }
 
 // 示例的 mention 选项（可以根据实际需求替换为 API 调用）
-const defaultMentionOptions: MentionOption[] = [
-  { id: '1', label: '用户1', value: 'user1', type: 'mention' },
-  { id: '2', label: '用户2', value: 'user2', type: 'mention' },
-  { id: '3', label: '标签1', value: 'tag1', type: 'hashtag' },
-  { id: '4', label: '标签2', value: 'tag2', type: 'hashtag' },
-]
+const defaultMentionOptions: MentionOption[] = []
 
 const AIMessageInput = ({
   onSend,
   placeholder = '在这里输入消息，按 Enter 发送...',
 }: AIMessageInputProps) => {
+  const [configs, setConfigs] = useState<AIConfig[]>([])
+  const [selectedConfigId, setSelectedConfigId] = useState<string>('')
+  const [loadingConfigs, setLoadingConfigs] = useState(false)
+
+  // 加载 AI 配置列表（仅在组件挂载时）
+  useEffect(() => {
+    const loadConfigs = async () => {
+      try {
+        setLoadingConfigs(true)
+        const configsList = await invoke<AIConfig[]>('get_ai_configs')
+        setConfigs(configsList)
+        // 如果有配置且没有选中，默认选择第一个
+        if (configsList.length > 0) {
+          setSelectedConfigId((prev) => {
+            // 如果当前选中的配置不存在于列表中，或者没有选中，则选择第一个
+            const currentConfigExists = configsList.some((c) => c.id === prev)
+            return currentConfigExists && prev ? prev : configsList[0].id
+          })
+        }
+      } catch (err) {
+        console.error('加载 AI 配置失败:', err)
+      } finally {
+        setLoadingConfigs(false)
+      }
+    }
+    loadConfigs()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const handleSend = (content: string) => {
     if (content.trim() && onSend) {
-      onSend(content.trim())
+      onSend(content.trim(), selectedConfigId || undefined)
     }
   }
 
@@ -41,8 +69,32 @@ const AIMessageInput = ({
     console.log('点击了图标:', iconName)
   }
 
+  // 使用 useMemo 优化配置选项的生成
+  const configOptions = useMemo(
+    () =>
+      configs.map((config) => ({
+        value: config.id,
+        label: `${config.name} (${config.model})`,
+      })),
+    [configs],
+  )
+
   return (
     <div className="flex flex-col bg-base-200 border border-base-300 rounded-lg">
+      {/* AI 配置选择器 */}
+      {configs.length > 0 && (
+        <div className="px-2 pt-2 pb-1 border-b border-base-300">
+          <Select
+            value={selectedConfigId}
+            options={configOptions}
+            onChange={(value) => setSelectedConfigId(value)}
+            disabled={loadingConfigs}
+            size="sm"
+            className="text-xs"
+          />
+        </div>
+      )}
+
       {/* 输入框区域 */}
       <div className="relative">
         <RichTextEditor

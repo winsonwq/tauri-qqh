@@ -222,7 +222,7 @@ const AIPanel = () => {
     [],
   )
 
-  const handleSend = (message: string) => {
+  const handleSend = (message: string, configId?: string) => {
     // 添加用户消息
     const userMessage: AIMessage = {
       id: Date.now().toString(),
@@ -233,7 +233,12 @@ const AIPanel = () => {
     setMessages((prev) => [...prev, userMessage])
 
     // TODO: 这里可以调用 AI API 获取回复
+    // 使用 configId 来调用对应的 AI 配置
     // 暂时模拟一个回复
+    if (configId) {
+      // 后续实现：根据 configId 获取对应的 AI 配置并调用 API
+      console.log('使用 AI 配置:', configId)
+    }
     setTimeout(() => {
       const assistantMessage: AIMessage = {
         id: (Date.now() + 1).toString(),

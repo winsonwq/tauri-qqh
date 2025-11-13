@@ -13,6 +13,7 @@ import TranscriptionInfoModal from './TranscriptionInfoModal';
 import DeleteConfirmModal from '../../../componets/DeleteConfirmModal';
 import { convertToSRT } from '../../../utils/srtConverter';
 import { useMessage } from '../../../componets/Toast';
+import Select from '../../../componets/Select';
 
 interface TranscriptionHistoryProps {
   tasks: TranscriptionTask[];
@@ -226,19 +227,22 @@ const TranscriptionHistory = ({
             <p className="text-sm mt-2">点击上方按钮创建转写任务</p>
           </div>
         ) : (
-          <select
-            className="select select-bordered select-sm w-full"
+          <Select
             value={selectedTaskId || ''}
-            onChange={(e) => onSelectTask(e.target.value || null)}
-          >
-            <option value="" disabled>请选择...</option>
-            {sortedTasks.map((task) => (
-              <option key={task.id} value={task.id}>
-                {new Date(task.created_at).toLocaleString('zh-CN')} - {getStatusText(task.status)}
-                {task.status === TranscriptionTaskStatus.COMPLETED ? ' ✓' : ''}
-              </option>
-            ))}
-          </select>
+            options={[
+              { value: '', label: '请选择...', disabled: true },
+              ...sortedTasks.map((task) => ({
+                value: task.id,
+                label: `${new Date(task.created_at).toLocaleString('zh-CN')} - ${getStatusText(task.status)}${
+                  task.status === TranscriptionTaskStatus.COMPLETED ? ' ✓' : ''
+                }`,
+              })),
+            ]}
+            onChange={(value) => onSelectTask(value || null)}
+            size="sm"
+            placeholder="请选择..."
+            aria-label="选择转写任务"
+          />
         )}
       </div>
 

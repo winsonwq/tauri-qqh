@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { TranscriptionParams, ModelInfo } from '../../../models';
+import Select from '../../../componets/Select';
 
 interface CreateTranscriptionTaskModalProps {
   isOpen: boolean;
@@ -69,22 +70,20 @@ const CreateTranscriptionTaskModal = ({
               {loadingModels ? (
                 <span className="loading loading-spinner loading-sm"></span>
               ) : (
-                <select
-                  className="select select-bordered w-full"
+                <Select
                   value={params.model || ''}
-                  onChange={(e) => setParams(prev => ({ ...prev, model: e.target.value }))}
+                  options={
+                    availableModels.length === 0
+                      ? [{ value: '', label: '没有可用的模型，请先下载模型', disabled: true }]
+                      : availableModels.map((model) => ({
+                          value: model.name,
+                          label: model.name,
+                        }))
+                  }
+                  onChange={(value) => setParams((prev) => ({ ...prev, model: value }))}
                   required
-                >
-                  {availableModels.length === 0 ? (
-                    <option value="" disabled>没有可用的模型，请先下载模型</option>
-                  ) : (
-                    availableModels.map((model) => (
-                      <option key={model.name} value={model.name}>
-                        {model.name}
-                      </option>
-                    ))
-                  )}
-                </select>
+                  aria-label="选择模型"
+                />
               )}
               {availableModels.length === 0 && !loadingModels && (
                 <label className="label">
@@ -100,17 +99,18 @@ const CreateTranscriptionTaskModal = ({
               <label className="label">
                 <span className="label-text">语言</span>
               </label>
-              <select
-                className="select select-bordered w-full"
+              <Select
                 value={params.language || 'zh'}
-                onChange={(e) => setParams(prev => ({ ...prev, language: e.target.value }))}
-              >
-                <option value="zh">中文</option>
-                <option value="en">English</option>
-                <option value="ja">日本語</option>
-                <option value="ko">한국어</option>
-                <option value="auto">自动检测</option>
-              </select>
+                options={[
+                  { value: 'zh', label: '中文' },
+                  { value: 'en', label: 'English' },
+                  { value: 'ja', label: '日本語' },
+                  { value: 'ko', label: '한국어' },
+                  { value: 'auto', label: '自动检测' },
+                ]}
+                onChange={(value) => setParams((prev) => ({ ...prev, language: value }))}
+                aria-label="选择语言"
+              />
             </div>
 
             {/* 是否翻译 */}
