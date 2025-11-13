@@ -2864,7 +2864,7 @@ async fn summarize_chat_title(
     // 添加 system message，要求生成简短标题
     let system_message = ai::ChatMessage {
         role: "system".to_string(),
-        content: Some("请根据以下对话内容，生成一个简洁的标题，不超过 20 个字符。只返回标题，不要包含其他内容。".to_string()),
+        content: Some("请根据以下对话内容，生成一个简洁的标题，纯文本，不超过 20 个字符。只返回标题，不要包含其他内容，不包含emoji。".to_string()),
         tool_calls: None,
         tool_call_id: None,
         name: None,

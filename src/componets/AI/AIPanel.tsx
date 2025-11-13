@@ -11,6 +11,7 @@ import { markdownComponents } from './MarkdownComponents'
 import { MCPServerInfo, MCPTool, Chat, ChatListItem, Message as ChatMessage } from '../../models'
 import { useMessage } from '../Toast'
 import { useAppSelector } from '../../redux/hooks'
+import Tooltip from '../Tooltip'
 
 interface AIMessage {
   id: string
@@ -854,11 +855,17 @@ const AIPanel = () => {
       return
     }
 
+    // 确保有可用的配置
+    if (!selectedConfigId && configs.length === 0) {
+      message.error('没有可用的 AI 配置，无法生成标题')
+      return
+    }
+
     try {
       message.info('正在生成标题...')
       const newTitle = await invoke<string>('summarize_chat_title', {
         chatId: currentChat.id,
-        configId: selectedConfigId || null,
+        configId: selectedConfigId || (configs.length > 0 ? configs[0].id : null),
       })
 
       // 更新当前 chat 的标题
@@ -890,29 +897,32 @@ const AIPanel = () => {
         </div>
         <div className="flex items-center gap-2">
           {currentChat && messages.length > 0 && (
-            <button
-              className="btn btn-sm btn-ghost"
-              onClick={handleSummarizeTitle}
-              title="使用 AI 生成标题"
-            >
-              <FaMagic className="h-4 w-4" />
-            </button>
+            <Tooltip content="使用 AI 生成标题" position="bottom">
+              <button
+                className="btn btn-xs btn-ghost btn-square"
+                onClick={handleSummarizeTitle}
+              >
+                <FaMagic className="h-4 w-4" />
+              </button>
+            </Tooltip>
           )}
-          <button
-            className="btn btn-sm btn-ghost"
-            onClick={handleCreateChat}
-            title="新建对话"
-          >
-            <HiPlus className="h-4 w-4" />
-          </button>
-          <div className="relative" ref={historyDropdownRef}>
+          <Tooltip content="新建对话" position="bottom">
             <button
-              className="btn btn-sm btn-ghost"
-              onClick={() => setShowHistoryDropdown(!showHistoryDropdown)}
-              title="历史记录"
+              className="btn btn-xs btn-ghost btn-square"
+              onClick={handleCreateChat}
             >
-              <HiClock className="h-4 w-4" />
+              <HiPlus className="h-4 w-4" />
             </button>
+          </Tooltip>
+          <div className="relative" ref={historyDropdownRef}>
+            <Tooltip content="历史记录" position="bottom">
+              <button
+                className="btn btn-xs btn-ghost btn-square"
+                onClick={() => setShowHistoryDropdown(!showHistoryDropdown)}
+              >
+                <HiClock className="h-4 w-4" />
+              </button>
+            </Tooltip>
             {showHistoryDropdown && (
               <ul className="absolute right-0 top-full mt-1 bg-base-100 rounded-box z-[100] w-64 p-2 shadow-lg border border-base-300 max-h-96 overflow-y-auto">
                 {chatList.length === 0 ? (
