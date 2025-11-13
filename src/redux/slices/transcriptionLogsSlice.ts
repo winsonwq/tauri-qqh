@@ -9,6 +9,9 @@ const initialState: TranscriptionLogsState = {
   logs: {},
 };
 
+// 限制每个任务的日志条数，避免内存无限增长
+const MAX_LOGS_PER_TASK = 1000;
+
 const transcriptionLogsSlice = createSlice({
   name: 'transcriptionLogs',
   initialState,
@@ -21,7 +24,16 @@ const transcriptionLogsSlice = createSlice({
       }
       // 只有当 log 不为空时才追加（避免初始化时的空字符串）
       if (log.trim()) {
-        state.logs[taskId].push(log);
+        const currentLogs = state.logs[taskId];
+        // 检查最新日志是否与即将添加的日志相同，如果相同则不添加
+        if (currentLogs.length === 0 || currentLogs[currentLogs.length - 1] !== log) {
+          state.logs[taskId].push(log);
+          // 如果日志数量超过限制，移除最旧的日志（保留最新的），Immer 会自动处理不可变更新
+          if (state.logs[taskId].length > MAX_LOGS_PER_TASK) {
+            // 移除最旧的日志，只保留 MAX_LOGS_PER_TASK 条
+            state.logs[taskId].splice(0, state.logs[taskId].length - MAX_LOGS_PER_TASK);
+          }
+        }
       }
       // 如果 log 为空，至少确保数组已初始化（通过上面的 if 语句）
     },

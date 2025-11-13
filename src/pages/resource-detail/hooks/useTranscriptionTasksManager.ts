@@ -3,6 +3,8 @@ import {
   SetStateAction,
   useCallback,
   useState,
+  useRef,
+  useEffect,
 } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import {
@@ -48,7 +50,20 @@ const useTranscriptionTasksManager = ({
         (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       );
 
-      setTasks(sortedTasks);
+      setTasks((prevTasks) => {
+        // 只有当任务列表实际发生变化时才更新状态，避免不必要的重新渲染
+        if (
+          prevTasks.length === sortedTasks.length &&
+          prevTasks.every(
+            (prevTask, index) =>
+              prevTask.id === sortedTasks[index].id &&
+              prevTask.status === sortedTasks[index].status
+          )
+        ) {
+          return prevTasks;
+        }
+        return sortedTasks;
+      });
 
       if (selectDefault) {
         if (sortedTasks.length === 0) {
@@ -105,6 +120,24 @@ const useTranscriptionTasksManager = ({
     setResourceData,
   ]);
 
+  // 使用 ref 存储 tasks，避免循环依赖
+  const tasksRef = useRef<TranscriptionTask[]>([]);
+  const selectedTaskIdRef = useRef<string | null>(null);
+  const resourceRef = useRef<TranscriptionResource | null>(null);
+  
+  // 同步 ref 和 state
+  useEffect(() => {
+    tasksRef.current = tasks;
+  }, [tasks]);
+  
+  useEffect(() => {
+    selectedTaskIdRef.current = selectedTaskId;
+  }, [selectedTaskId]);
+
+  useEffect(() => {
+    resourceRef.current = resource;
+  }, [resource]);
+
   const loadTasks = useCallback(
     async (autoSwitchToRunning = true) => {
       if (!resourceId) return;
@@ -114,34 +147,47 @@ const useTranscriptionTasksManager = ({
           { resourceId }
         );
 
-        const previousTasks = tasks;
+        const previousTasks = tasksRef.current;
 
         const sortedTasks = applyTasks(result, true);
 
-        await refreshSubtitle(sortedTasks, resource ?? null);
+        // 使用 resourceRef 避免依赖 resource 对象引用
+        await refreshSubtitle(sortedTasks, resourceRef.current ?? null);
 
-        if (sortedTasks.length > 0 && autoSwitchToRunning) {
-          const runningTask = sortedTasks.find(
-            (task) => task.status === TranscriptionTaskStatus.RUNNING
-          );
-          if (runningTask) {
-            const previousRunningTask = previousTasks.find(
-              (task) => task.id === runningTask.id
+        // 如果传入了 autoSwitchToRunning 并且有任务正在运行，则尝试自动切换到运行中的任务
+        if (autoSwitchToRunning) {
+          if (sortedTasks.length > 0) {
+            const runningTask = sortedTasks.find(
+              (task) => task.status === TranscriptionTaskStatus.RUNNING
             );
-            const isNewRunningTask =
-              !previousRunningTask ||
-              previousRunningTask.status !== TranscriptionTaskStatus.RUNNING;
-            const currentTaskIsNotRunning =
-              !selectedTaskId ||
-              !previousTasks.find(
-                (task) =>
-                  task.id === selectedTaskId &&
-                  task.status === TranscriptionTaskStatus.RUNNING
+            if (runningTask) {
+              const previousRunningTask = previousTasks.find(
+                (task) => task.id === runningTask.id
               );
+              const isNewRunningTask =
+                !previousRunningTask ||
+                previousRunningTask.status !== TranscriptionTaskStatus.RUNNING;
+              const currentTaskIsNotRunning =
+                !selectedTaskIdRef.current ||
+                !previousTasks.find(
+                  (task) =>
+                    task.id === selectedTaskIdRef.current &&
+                    task.status === TranscriptionTaskStatus.RUNNING
+                );
 
-            if (isNewRunningTask || currentTaskIsNotRunning) {
-              setSelectedTaskId(runningTask.id);
+              if (isNewRunningTask || currentTaskIsNotRunning) {
+                setSelectedTaskId(runningTask.id);
+              }
             }
+          }
+        } else {
+          // 如果不自动切换，但当前选中的任务已经停止或完成，则清除选中状态
+          const currentSelectedTask = sortedTasks.find(t => t.id === selectedTaskIdRef.current);
+          if (currentSelectedTask && 
+             (currentSelectedTask.status === TranscriptionTaskStatus.STOPPED || 
+              currentSelectedTask.status === TranscriptionTaskStatus.COMPLETED || 
+              currentSelectedTask.status === TranscriptionTaskStatus.FAILED)) {
+            setSelectedTaskId(null);
           }
         }
       } catch (err) {
@@ -150,11 +196,9 @@ const useTranscriptionTasksManager = ({
     },
     [
       resourceId,
-      tasks,
       applyTasks,
       refreshSubtitle,
-      resource,
-      selectedTaskId,
+      // 移除 resource 依赖，使用 resourceRef 代替
     ]
   );
 

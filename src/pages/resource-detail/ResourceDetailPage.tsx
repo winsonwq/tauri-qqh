@@ -24,10 +24,14 @@ import useTranscriptionTasksManager from './hooks/useTranscriptionTasksManager';
 const ResourceDetailPage = () => {
   const dispatch = useAppDispatch();
   const { currentPage } = useAppSelector((state) => state.featureKeys);
-  const videoExtraction = useAppSelector((state) => state.videoExtraction);
   const message = useMessage();
   // 从 currentPage 中提取 resourceId（格式：resource:${resourceId}）
   const resourceId = currentPage?.startsWith('resource:') ? currentPage.replace('resource:', '') : null;
+  // 只选择当前资源相关的提取状态，避免整个 videoExtraction 对象变化导致重新渲染
+  const isExtracting = useAppSelector(
+    (state) => resourceId ? (state.videoExtraction.extractions[resourceId]?.isExtracting ?? false) : false
+  );
+  const memorizedMessage = useMemo(() => message, [message]);
   const {
     resource,
     audioSrc,
@@ -36,7 +40,7 @@ const ResourceDetailPage = () => {
     setResourceData,
     refreshResource,
     refreshSubtitle,
-  } = useResourceMedia({ resourceId, message });
+  } = useResourceMedia({ resourceId, message: memorizedMessage });
   const [showCreateTaskModal, setShowCreateTaskModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const {
@@ -65,24 +69,44 @@ const ResourceDetailPage = () => {
   // 用于跟踪是否已经触发过音频提取，避免重复触发
   const extractionTriggeredRef = useRef<Set<string>>(new Set());
 
-  // 轮询任务列表，检测运行中的任务并自动切换
-  useEffect(() => {
-    if (!resourceId) return;
-
-    const hasRunningTask = tasks.some(
+  // 使用 useMemo 稳定 hasRunningTask，避免数组引用变化导致频繁触发
+  const hasRunningTask = useMemo(() => {
+    return tasks.some(
       (task) => task.status === TranscriptionTaskStatus.RUNNING
     );
+  }, [tasks]);
 
+  // 轮询任务列表，检测运行中的任务并自动切换
+  // 使用 ref 跟踪上一次的状态，避免不必要的轮询
+  const previousHasRunningTaskRef = useRef<boolean>(false);
+  
+  useEffect(() => {
+    if (!resourceId) {
+      previousHasRunningTaskRef.current = false;
+      return;
+    }
+
+    // 只有当状态从无运行任务变为有运行任务，或者一直有运行任务时才启动轮询
     if (hasRunningTask) {
+      // 如果之前没有运行任务，立即加载一次
+      if (!previousHasRunningTaskRef.current) {
+        loadTasks(true);
+      }
+      
       const interval = setInterval(() => {
         loadTasks(true);
-      }, 2000);
+      }, 3000); // 增加轮询间隔从 2 秒到 3 秒，减少 API 调用频率
 
+      previousHasRunningTaskRef.current = true;
+      
       return () => {
         clearInterval(interval);
+        previousHasRunningTaskRef.current = false;
       };
+    } else {
+      previousHasRunningTaskRef.current = false;
     }
-  }, [tasks, resourceId, loadTasks]);
+  }, [hasRunningTask, resourceId, loadTasks]);
 
   // 清理提取事件监听器
   const cleanupExtractionListeners = useCallback(() => {
@@ -119,9 +143,9 @@ const ResourceDetailPage = () => {
   };
 
   // 显示创建任务弹窗
-  const handleShowCreateTaskModal = () => {
+  const handleShowCreateTaskModal = useCallback(() => {
     setShowCreateTaskModal(true);
-  };
+  }, []);
 
   // 删除资源
   const handleDeleteResource = async () => {
@@ -215,15 +239,18 @@ const ResourceDetailPage = () => {
     }
 
     loadResourceAndTasks();
-  }, [
-    resourceId,
-    loadResourceAndTasks,
-    cleanupTaskListeners,
-    cleanupExtractionListeners,
-    setResourceData,
-    resetTasks,
-    setResultContent,
-  ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resourceId]);
+
+  const handleTaskStopped = useCallback(async () => {
+    await loadTasks(false);
+    setSelectedTaskId(null);
+  }, [loadTasks, setSelectedTaskId]);
+
+  // 稳定 onTaskDeleted 回调，避免 loadTasks 引用变化导致重新渲染
+  const handleTaskDeleted = useCallback(async () => {
+    await loadTasks(false);
+  }, [loadTasks]);
 
   // 使用 useMemo 稳定资源的关键属性，避免不必要的 effect 触发
   const resourceExtractionKey = useMemo(() => {
@@ -248,8 +275,7 @@ const ResourceDetailPage = () => {
       }
 
       // 检查是否已经在提取中
-      const isAlreadyExtracting = videoExtraction.extractions[resourceId]?.isExtracting ?? false;
-      if (isAlreadyExtracting) {
+      if (isExtracting) {
         extractionTriggeredRef.current.add(resourceId);
         return;
       }
@@ -299,17 +325,21 @@ const ResourceDetailPage = () => {
       extractionTriggeredRef.current.delete(resourceId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resourceId, resourceExtractionKey]); // 只依赖 resourceExtractionKey，避免重复触发
+  }, [resourceId, resourceExtractionKey, isExtracting]); // 只依赖 resourceExtractionKey，避免重复触发
 
   // 计算 canCreateTask，必须在所有早期返回之前
   const canCreateTask = useMemo(() => {
     if (!resource) return true;
     if (resource.resource_type === ResourceType.VIDEO) {
-      return !!resource.extracted_audio_path &&
-        !videoExtraction.extractions[resource.id]?.isExtracting;
+      return !!resource.extracted_audio_path && !isExtracting;
     }
     return true;
-  }, [resource?.id, resource?.resource_type, resource?.extracted_audio_path, videoExtraction.extractions[resource?.id || '']?.isExtracting]);
+  }, [resource?.id, resource?.resource_type, resource?.extracted_audio_path, isExtracting]);
+
+  // 稳定 resourceName，避免 resource 对象引用变化导致重新渲染
+  const resourceName = useMemo(() => {
+    return resource?.name;
+  }, [resource?.name]);
 
   if (!resource) {
     return (
@@ -357,12 +387,12 @@ const ResourceDetailPage = () => {
             tasks={tasks}
             selectedTaskId={selectedTaskId}
             resultContent={resultContent}
-            resourceName={resource?.name}
+            resourceName={resourceName}
             canCreateTask={canCreateTask}
             onSelectTask={setSelectedTaskId}
             onCreateTask={handleShowCreateTaskModal}
-            onTaskDeleted={loadTasks}
-            onTaskStopped={loadTasks}
+            onTaskDeleted={handleTaskDeleted}
+            onTaskStopped={handleTaskStopped}
           />
         </div>
       </div>

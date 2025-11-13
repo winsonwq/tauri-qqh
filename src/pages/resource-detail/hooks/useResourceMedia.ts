@@ -155,7 +155,7 @@ const useResourceMedia = ({
       const url = await loadSubtitleFromTasks(tasks);
       setSubtitleUrl(url);
     },
-    [resource]
+    [resource?.id, resource?.resource_type] // 只依赖关键属性，避免对象引用变化
   );
 
   return {

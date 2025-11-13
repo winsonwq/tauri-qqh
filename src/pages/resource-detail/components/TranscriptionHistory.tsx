@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect, useRef, memo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeTextFile } from '@tauri-apps/plugin-fs';
@@ -50,29 +50,22 @@ const TranscriptionHistory = ({
   const logEndRef = useRef<HTMLDivElement>(null);
   const previousTaskIdRef = useRef<string | null>(null); // 跟踪上一次选中的任务 ID
 
-  // 从 Redux 读取日志
-  const logs = useAppSelector((state) => state.transcriptionLogs.logs);
-  // 过滤空字符串并合并日志
-  const realtimeLog = selectedTaskId 
-    ? (logs[selectedTaskId] || []).filter(log => log.trim()).join('\n') 
-    : '';
-  
-  const selectedTask = selectedTaskId ? tasks.find(t => t.id === selectedTaskId) : null;
-  
-  // 调试：打印任务状态
-  useEffect(() => {
-    if (selectedTask) {
-      console.log('当前选中任务:', {
-        id: selectedTask.id,
-        status: selectedTask.status,
-        statusType: typeof selectedTask.status,
-        RUNNING: TranscriptionTaskStatus.RUNNING,
-        isRunning: selectedTask.status === TranscriptionTaskStatus.RUNNING,
-        statusEquals: selectedTask.status === 'running',
-      });
-    }
-  }, [selectedTask]);
+  // 只选择当前任务的日志，避免其他任务的日志更新导致重新渲染
+  const currentTaskLogs = useAppSelector(
+    (state) => selectedTaskId ? (state.transcriptionLogs.logs[selectedTaskId] || []) : []
+  );
+  // 使用 useMemo 缓存计算结果，避免每次渲染都重新计算
+  const realtimeLog = useMemo(() => {
+    if (!selectedTaskId || currentTaskLogs.length === 0) return '';
+    return currentTaskLogs.filter(log => log.trim()).join('\n');
+  }, [selectedTaskId, currentTaskLogs]);
 
+  // 使用 useMemo 缓存 selectedTask，避免每次渲染都重新查找
+  const selectedTask = useMemo(() => {
+    if (!selectedTaskId) return null;
+    return tasks.find(t => t.id === selectedTaskId) ?? null;
+  }, [selectedTaskId, tasks]);
+  
   // 删除任务
   const handleDeleteTask = async () => {
     if (!selectedTaskId) return;
@@ -161,14 +154,19 @@ const TranscriptionHistory = ({
     }
   };
 
-  // 当日志更新时，自动滚动到底部
+  // 当日志更新时，自动滚动到底部（使用节流优化性能）
   useEffect(() => {
-    if (realtimeLog && logEndRef.current) {
-      setTimeout(() => {
-        logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-      }, 0);
-    }
-  }, [realtimeLog]);
+    if (!realtimeLog || !logEndRef.current || viewMode !== 'log') return;
+    
+    // 使用 requestAnimationFrame 优化滚动性能
+    const timeoutId = setTimeout(() => {
+      if (logEndRef.current) {
+        logEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      }
+    }, 100); // 增加延迟，减少滚动频率
+    
+    return () => clearTimeout(timeoutId);
+  }, [realtimeLog, viewMode]);
 
   // 当选中任务变化时，自动设置视图模式（仅在任务切换时，不覆盖用户手动选择）
   useEffect(() => {
@@ -474,5 +472,5 @@ const TranscriptionHistory = ({
   );
 };
 
-export default TranscriptionHistory;
+export default memo(TranscriptionHistory);
 
