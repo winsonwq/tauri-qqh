@@ -118,6 +118,38 @@ pub struct FunctionCallChunk {
     pub arguments: Option<String>,
 }
 
+// Chat completion 非流式响应
+#[derive(Debug, Deserialize)]
+pub struct ChatCompletionResponse {
+    #[allow(dead_code)]
+    pub id: String,
+    pub choices: Vec<ChoiceResponse>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub created: Option<u64>,
+}
+
+// 选择响应
+#[derive(Debug, Deserialize)]
+pub struct ChoiceResponse {
+    pub message: MessageResponse,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub index: Option<u32>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub finish_reason: Option<String>,
+}
+
+// 消息响应
+#[derive(Debug, Deserialize)]
+pub struct MessageResponse {
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub role: Option<String>,
+    pub content: Option<String>,
+}
+
 // 将 MCP 工具转换为 OpenAI 工具定义
 pub fn mcp_tool_to_openai_tool(mcp_tool: &crate::MCPTool) -> ToolDefinition {
     ToolDefinition {

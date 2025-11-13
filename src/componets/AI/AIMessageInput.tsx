@@ -1,10 +1,8 @@
-import { useState, useEffect, useMemo } from 'react'
-import { invoke } from '@tauri-apps/api/core'
+import { useState } from 'react'
 import { FaPlus, FaPaperclip, FaSearch, FaArrowUp, FaStop } from 'react-icons/fa'
 import RichTextEditor from './RichTextEditor'
 import { MentionOption } from './MentionPlugin'
-import { AIConfig } from '../../models'
-import Select from '../Select'
+import AIConfigSelector from './AIConfigSelector'
 
 interface AIMessageInputProps {
   onSend?: (message: string, configId?: string) => void
@@ -22,34 +20,7 @@ const AIMessageInput = ({
   isStreaming = false,
   onStop,
 }: AIMessageInputProps) => {
-  const [configs, setConfigs] = useState<AIConfig[]>([])
   const [selectedConfigId, setSelectedConfigId] = useState<string>('')
-  const [loadingConfigs, setLoadingConfigs] = useState(false)
-
-  // 加载 AI 配置列表（仅在组件挂载时）
-  useEffect(() => {
-    const loadConfigs = async () => {
-      try {
-        setLoadingConfigs(true)
-        const configsList = await invoke<AIConfig[]>('get_ai_configs')
-        setConfigs(configsList)
-        // 如果有配置且没有选中，默认选择第一个
-        if (configsList.length > 0) {
-          setSelectedConfigId((prev) => {
-            // 如果当前选中的配置不存在于列表中，或者没有选中，则选择第一个
-            const currentConfigExists = configsList.some((c) => c.id === prev)
-            return currentConfigExists && prev ? prev : configsList[0].id
-          })
-        }
-      } catch (err) {
-        console.error('加载 AI 配置失败:', err)
-      } finally {
-        setLoadingConfigs(false)
-      }
-    }
-    loadConfigs()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   const handleSend = (content: string) => {
     if (content.trim() && onSend) {
@@ -73,32 +44,8 @@ const AIMessageInput = ({
     console.log('点击了图标:', iconName)
   }
 
-  // 使用 useMemo 优化配置选项的生成
-  const configOptions = useMemo(
-    () =>
-      configs.map((config) => ({
-        value: config.id,
-        label: `${config.name} (${config.model})`,
-      })),
-    [configs],
-  )
-
   return (
     <div className="flex flex-col bg-base-200 border border-base-300 rounded-lg">
-      {/* AI 配置选择器 */}
-      {configs.length > 0 && (
-        <div className="px-2 pt-2 pb-1 border-b border-base-300">
-          <Select
-            value={selectedConfigId}
-            options={configOptions}
-            onChange={(value) => setSelectedConfigId(value)}
-            disabled={loadingConfigs}
-            size="sm"
-            className="text-xs"
-          />
-        </div>
-      )}
-
       {/* 输入框区域 */}
       <div className="relative">
         <RichTextEditor
@@ -137,6 +84,12 @@ const AIMessageInput = ({
           >
             <FaSearch className="w-4 h-4" />
           </button>
+          
+          {/* AI 配置选择器 */}
+          <AIConfigSelector
+            selectedConfigId={selectedConfigId}
+            onConfigChange={setSelectedConfigId}
+          />
         </div>
 
         {/* 右侧发送/停止按钮 */}

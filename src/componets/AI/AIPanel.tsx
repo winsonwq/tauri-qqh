@@ -4,6 +4,7 @@ import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { HiPlus, HiClock } from 'react-icons/hi2'
+import { FaMagic } from 'react-icons/fa'
 import AIMessageInput from './AIMessageInput'
 import { ToolCall } from './ToolCallConfirmModal'
 import { markdownComponents } from './MarkdownComponents'
@@ -841,6 +842,43 @@ const AIPanel = () => {
     }
   }
 
+  // 使用 AI 总结 chat 标题
+  const handleSummarizeTitle = async () => {
+    if (!currentChat) {
+      message.error('当前没有活动的对话')
+      return
+    }
+
+    if (messages.length === 0) {
+      message.error('对话中没有消息，无法生成标题')
+      return
+    }
+
+    try {
+      message.info('正在生成标题...')
+      const newTitle = await invoke<string>('summarize_chat_title', {
+        chatId: currentChat.id,
+        configId: selectedConfigId || null,
+      })
+
+      // 更新当前 chat 的标题
+      setCurrentChat((prev) => {
+        if (prev) {
+          return { ...prev, title: newTitle }
+        }
+        return prev
+      })
+
+      // 重新加载 chat 列表以更新标题
+      await loadChatList()
+
+      message.success('标题生成成功')
+    } catch (err) {
+      console.error('生成标题失败:', err)
+      message.error(`生成标题失败: ${err}`)
+    }
+  }
+
   return (
     <div className="flex flex-col h-full bg-base-100">
       {/* Chat Bar */}
@@ -851,6 +889,15 @@ const AIPanel = () => {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {currentChat && messages.length > 0 && (
+            <button
+              className="btn btn-sm btn-ghost"
+              onClick={handleSummarizeTitle}
+              title="使用 AI 生成标题"
+            >
+              <FaMagic className="h-4 w-4" />
+            </button>
+          )}
           <button
             className="btn btn-sm btn-ghost"
             onClick={handleCreateChat}
