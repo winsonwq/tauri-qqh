@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { useAppDispatch, useAppSelector } from "../redux/hooks";
 import { setCurrentFeature } from "../redux/slices/featureKeysSlice";
 import { toggleSidePanel } from "../redux/slices/sidePanelSlice";
+import { loadMCPConfigs } from "../redux/slices/mcpSlice";
+import { loadAIConfigs } from "../redux/slices/aiConfigSlice";
 import AppSideBar from "./AppSideBar";
 import AppContent from "./AppContent";
 import SidePanel from "./SidePanel";
@@ -19,6 +21,12 @@ const Layout = () => {
       dispatch(setCurrentFeature('home'));
     }
   }, [currentFeature, dispatch]);
+
+  // 应用启动时加载 MCP 配置和 AI 配置
+  useEffect(() => {
+    dispatch(loadMCPConfigs());
+    dispatch(loadAIConfigs());
+  }, [dispatch]);
 
   const handleToggleSidebar = () => {
     setSidebarOpen(!sidebarOpen);

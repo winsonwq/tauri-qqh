@@ -1,12 +1,21 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { invoke } from '@tauri-apps/api/core'
+import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import ReactMarkdown from 'react-markdown'
 import AIMessageInput from './AIMessageInput'
+import ToolCallConfirmModal, { ToolCall } from './ToolCallConfirmModal'
+import { AIConfig, MCPServerInfo, MCPTool } from '../../models'
+import { useMessage } from '../Toast'
+import { useAppSelector } from '../../redux/hooks'
 
 interface AIMessage {
   id: string
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'tool'
   content: string
   timestamp: Date
+  tool_calls?: ToolCall[]
+  tool_call_id?: string
+  name?: string // tool name
 }
 
 // Markdown 组件配置 - 共用样式
@@ -149,11 +158,19 @@ const MessageItem = ({ message, isSticky, onRef }: MessageItemProps) => {
 }
 
 const AIPanel = () => {
+  const message = useMessage()
   const [messages, setMessages] = useState<AIMessage[]>([])
   const [stickyMessageId, setStickyMessageId] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map())
+  const configs = useAppSelector((state) => state.aiConfig.configs)
+  const mcpServers = useAppSelector((state) => state.mcp.servers)
+  const [selectedConfigId, setSelectedConfigId] = useState<string>('')
+  const [pendingToolCalls, setPendingToolCalls] = useState<ToolCall[] | null>(null)
+  const [currentStreamEventId, setCurrentStreamEventId] = useState<string | null>(null)
+  const unlistenRef = useRef<UnlistenFn | null>(null)
+  const systemMessage = '你是一个专业的文档解析和分析专家，擅长理解和分析各种类型的文档内容。'
 
   // 自动滚动到底部
   useEffect(() => {
@@ -222,63 +239,224 @@ const AIPanel = () => {
     [],
   )
 
-  const handleSend = (message: string, configId?: string) => {
+  // 从 Redux store 中获取 AI 配置，并设置默认选中的配置
+  useEffect(() => {
+    if (configs.length > 0 && !selectedConfigId) {
+      setSelectedConfigId(configs[0].id)
+    }
+  }, [configs, selectedConfigId])
+
+  // 清理事件监听
+  useEffect(() => {
+    return () => {
+      if (unlistenRef.current) {
+        unlistenRef.current()
+        unlistenRef.current = null
+      }
+    }
+  }, [])
+
+  // 获取可用的 MCP 工具
+  const getAvailableTools = (): MCPTool[] => {
+    const tools: MCPTool[] = []
+    mcpServers.forEach((server) => {
+      if (server.status === 'connected' && server.tools) {
+        tools.push(...server.tools)
+      }
+    })
+    return tools
+  }
+
+  // 查找工具对应的服务器
+  const findToolServer = (toolName: string): MCPServerInfo | null => {
+    return mcpServers.find((server) =>
+      server.tools?.some((tool) => tool.name === toolName)
+    ) || null
+  }
+
+  // 处理流式响应
+  const handleStreamResponse = async (eventId: string) => {
+    // 创建助手消息
+    const assistantMessageId = Date.now().toString()
+    const assistantMessage: AIMessage = {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date(),
+    }
+    setMessages((prev) => [...prev, assistantMessage])
+
+    // 监听流式事件
+    const unlisten = await listen<{
+      type: string
+      content?: string
+      tool_calls?: ToolCall[]
+      event_id: string
+    }>(`ai-chat-stream-${eventId}`, (event) => {
+      const payload = event.payload
+      if (payload.type === 'content' && payload.content) {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === assistantMessageId
+              ? { ...msg, content: msg.content + payload.content }
+              : msg
+          )
+        )
+      } else if (payload.type === 'tool_calls' && payload.tool_calls) {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === assistantMessageId
+              ? { ...msg, tool_calls: payload.tool_calls }
+              : msg
+          )
+        )
+        setPendingToolCalls(payload.tool_calls)
+      } else if (payload.type === 'done') {
+        if (unlistenRef.current) {
+          unlistenRef.current()
+          unlistenRef.current = null
+        }
+        setCurrentStreamEventId(null)
+      }
+    })
+    unlistenRef.current = unlisten
+  }
+
+  // 执行工具调用并继续对话
+  const executeToolCallsAndContinue = async (toolCalls: ToolCall[]) => {
+    if (!selectedConfigId) {
+      message.error('请先选择 AI 配置')
+      return
+    }
+
+    // 执行所有工具调用
+    const toolResults: AIMessage[] = []
+    for (const toolCall of toolCalls) {
+      const server = findToolServer(toolCall.function.name)
+      if (!server) {
+        message.error(`找不到工具 ${toolCall.function.name} 对应的服务器`)
+        continue
+      }
+
+      try {
+        let args: any = {}
+        try {
+          args = JSON.parse(toolCall.function.arguments)
+        } catch {
+          args = {}
+        }
+
+        const result = await invoke<any>('execute_mcp_tool_call', {
+          serverName: server.name,
+          toolName: toolCall.function.name,
+          arguments: args,
+        })
+
+        toolResults.push({
+          id: Date.now().toString() + Math.random(),
+          role: 'tool',
+          content: JSON.stringify(result),
+          timestamp: new Date(),
+          tool_call_id: toolCall.id,
+          name: toolCall.function.name,
+        })
+      } catch (err) {
+        console.error('工具调用失败:', err)
+        message.error(`工具调用失败: ${err}`)
+      }
+    }
+
+    // 添加工具结果消息
+    setMessages((prev) => [...prev, ...toolResults])
+
+    // 继续对话
+    const allMessages = [...messages, ...toolResults]
+    const chatMessages = allMessages
+      .filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'tool')
+      .map((m) => ({
+        role: m.role,
+        content: m.content,
+        tool_calls: m.tool_calls,
+        tool_call_id: m.tool_call_id,
+        name: m.name,
+      }))
+
+    const tools = getAvailableTools()
+    const eventId = await invoke<string>('chat_completion', {
+      configId: selectedConfigId,
+      messages: chatMessages,
+      tools: tools.length > 0 ? tools : null,
+      systemMessage: systemMessage,
+    })
+
+    setCurrentStreamEventId(eventId)
+    await handleStreamResponse(eventId)
+  }
+
+  const handleSend = async (messageText: string, configId?: string) => {
+    const effectiveConfigId = configId || selectedConfigId
+    if (!effectiveConfigId) {
+      message.error('请先选择 AI 配置')
+      return
+    }
+
     // 添加用户消息
     const userMessage: AIMessage = {
       id: Date.now().toString(),
       role: 'user',
-      content: message,
+      content: messageText,
       timestamp: new Date(),
     }
     setMessages((prev) => [...prev, userMessage])
 
-    // TODO: 这里可以调用 AI API 获取回复
-    // 使用 configId 来调用对应的 AI 配置
-    // 暂时模拟一个回复
-    if (configId) {
-      // 后续实现：根据 configId 获取对应的 AI 配置并调用 API
-      console.log('使用 AI 配置:', configId)
+    try {
+      // 构建消息历史
+      const chatMessages = messages
+        .filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'tool')
+        .map((m) => ({
+          role: m.role,
+          content: m.content,
+          tool_calls: m.tool_calls,
+          tool_call_id: m.tool_call_id,
+          name: m.name,
+        }))
+
+      // 添加当前用户消息
+      chatMessages.push({
+        role: 'user',
+        content: messageText,
+      })
+
+      // 获取可用工具
+      const tools = getAvailableTools()
+
+      // 调用流式 API
+      const eventId = await invoke<string>('chat_completion', {
+        configId: effectiveConfigId,
+        messages: chatMessages,
+        tools: tools.length > 0 ? tools : null,
+        systemMessage: systemMessage,
+      })
+
+      setCurrentStreamEventId(eventId)
+      await handleStreamResponse(eventId)
+    } catch (err) {
+      console.error('AI 对话失败:', err)
+      message.error(`AI 对话失败: ${err}`)
     }
-    setTimeout(() => {
-      const assistantMessage: AIMessage = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: `这是一个模拟的 AI 回复。实际使用时，这里会调用 AI API 获取真实的回复。
+  }
 
-## 功能特性
+  // 处理工具调用确认
+  const handleToolCallConfirm = async () => {
+    if (!pendingToolCalls) return
+    const toolCalls = pendingToolCalls
+    setPendingToolCalls(null)
+    await executeToolCallsAndContinue(toolCalls)
+  }
 
-这个 AI 助手支持以下功能：
-
-1. **Markdown 渲染** - 支持完整的 Markdown 语法
-2. **代码高亮** - 可以展示代码块和行内代码
-3. **格式化文本** - 支持*斜体*和**粗体**文本
-4. **列表展示** - 有序列表和无序列表
-
-### 代码示例
-
-这里是一个简单的 JavaScript 示例：
-
-\`\`\`javascript
-function greet(name) {
-  return \`Hello, \${name}!\`;
-}
-
-console.log(greet('World'));
-\`\`\`
-
-### 引用文本
-
-> 这是一段引用文本，用于强调重要信息。
-
-### 链接和更多内容
-
-你可以访问 [示例链接](https://example.com) 了解更多信息。
-
-**注意**：这是一个模拟回复，实际使用时将调用真实的 AI API。`,
-        timestamp: new Date(),
-      }
-      setMessages((prev) => [...prev, assistantMessage])
-    }, 500)
+  const handleToolCallCancel = () => {
+    setPendingToolCalls(null)
+    message.info('已取消工具调用')
   }
 
   return (
@@ -316,6 +494,16 @@ console.log(greet('World'));
       <div className="flex-shrink-0 p-3">
         <AIMessageInput onSend={handleSend} />
       </div>
+
+      {/* 工具调用确认弹窗 */}
+      {pendingToolCalls && (
+        <ToolCallConfirmModal
+          isOpen={!!pendingToolCalls}
+          toolCalls={pendingToolCalls}
+          onConfirm={handleToolCallConfirm}
+          onCancel={handleToolCallCancel}
+        />
+      )}
     </div>
   )
 }

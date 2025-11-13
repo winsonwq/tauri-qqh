@@ -1,6 +1,9 @@
 mod db;
+mod mcp;
+mod ai;
 
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{Emitter, Manager, State};
@@ -11,6 +14,7 @@ use tokio::task::JoinHandle;
 use tokio::process::Child;
 use tokio::sync::Mutex;
 use std::collections::HashMap;
+use indexmap::IndexMap;
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 
@@ -87,6 +91,104 @@ pub struct AIConfig {
     pub model: String,
     pub created_at: String,
     pub updated_at: String,
+}
+
+// MCP HTTP 传输配置
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MCPHTTPTransport {
+    #[serde(rename = "type")]
+    pub transport_type: String, // "http"
+    pub url: String,
+}
+
+// MCP Stdio 传输配置（新格式）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MCPStdioTransport {
+    #[serde(rename = "type")]
+    pub transport_type: String, // "stdio"
+    pub command: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "workingDir")]
+    pub working_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<HashMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "retryAttempts")]
+    pub retry_attempts: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "retryDelay")]
+    pub retry_delay: Option<u32>,
+}
+
+// MCP 传输配置（使用 serde_json::Value 以支持两种类型）
+#[derive(Debug, Clone)]
+pub enum MCPTransport {
+    Http(MCPHTTPTransport),
+    Stdio(MCPStdioTransport),
+}
+
+// MCP 服务器配置（支持多种格式）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MCPServerConfig {
+    // 新格式的元数据字段
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "type")]
+    pub server_type: Option<String>, // "stdio" | "http"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    
+    // 新格式的传输配置（使用 serde_json::Value 以便灵活解析）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport: Option<serde_json::Value>,
+    
+    // 旧格式的 stdio 传输配置（向后兼容）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<HashMap<String, String>>,
+    
+    // 旧格式的 HTTP 传输配置（向后兼容）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+// MCP 配置（整个配置文件格式）
+// 支持两种格式：
+// 1. 旧格式：{ "mcpServers": { "server-name": { ... } } }
+// 2. 新格式：{ "server-name": { name: "...", transport: { ... } } }
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MCPConfig {
+    #[serde(default, rename = "mcpServers")]
+    pub mcp_servers: IndexMap<String, MCPServerConfig>,
+}
+
+// MCP 工具定义
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MCPTool {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(rename = "inputSchema")]
+    pub input_schema: serde_json::Value,
+}
+
+// MCP 服务器信息（包含连接状态和工具列表）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MCPServerInfo {
+    pub name: String, // 显示名称（优先使用配置中的 name 字段）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>, // 原始配置键名（用于删除等操作）
+    pub config: MCPServerConfig,
+    pub status: String, // "connected" | "disconnected" | "error"
+    #[serde(default)]
+    pub tools: Option<Vec<MCPTool>>,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 // 运行中的任务进程管理器
@@ -1796,6 +1898,574 @@ async fn delete_ai_config(
     Ok(())
 }
 
+// 获取所有 MCP 配置
+#[tauri::command]
+async fn get_mcp_configs(
+    app: tauri::AppHandle,
+) -> Result<Vec<MCPServerInfo>, String> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let config_path = mcp::get_mcp_config_path(&app_data_dir);
+    
+    let config = tokio::task::spawn_blocking(move || {
+        mcp::load_mcp_config(&config_path)
+    })
+    .await
+    .map_err(|e| format!("任务执行失败: {}", e))?
+    .map_err(|e| e)?;
+    
+    let mut servers = Vec::new();
+    for (name, server_config) in config.mcp_servers {
+        // 优先使用配置中的 name 字段，如果没有则使用配置键名
+        let display_name = server_config.name.as_ref().unwrap_or(&name).clone();
+        
+        // 测试连接并获取工具列表
+        match mcp::test_mcp_connection(&name, &server_config).await {
+            Ok(tools) => {
+                servers.push(MCPServerInfo {
+                    name: display_name,
+                    key: Some(name.clone()), // 保存原始键名
+                    config: server_config.clone(),
+                    status: "connected".to_string(),
+                    tools: Some(tools),
+                    error: None,
+                });
+            }
+            Err(e) => {
+                servers.push(MCPServerInfo {
+                    name: display_name,
+                    key: Some(name.clone()), // 保存原始键名
+                    config: server_config.clone(),
+                    status: "error".to_string(),
+                    tools: None,
+                    error: Some(e),
+                });
+            }
+        }
+    }
+    
+    Ok(servers)
+}
+
+// 获取完整的 MCP 配置
+#[tauri::command]
+async fn get_mcp_config_full(
+    app: tauri::AppHandle,
+) -> Result<MCPConfig, String> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let config_path = mcp::get_mcp_config_path(&app_data_dir);
+    
+    tokio::task::spawn_blocking(move || {
+        mcp::load_mcp_config(&config_path)
+    })
+    .await
+    .map_err(|e| format!("任务执行失败: {}", e))?
+    .map_err(|e| e)
+}
+
+// 保存 MCP 配置（添加或更新单个服务器）
+#[tauri::command]
+async fn save_mcp_config(
+    server_name: String,
+    server_config: MCPServerConfig,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let config_path = mcp::get_mcp_config_path(&app_data_dir);
+    
+    tokio::task::spawn_blocking({
+        let config_path_clone = config_path.clone();
+        move || {
+            let mut config = mcp::load_mcp_config(&config_path_clone)?;
+            config.mcp_servers.insert(server_name, server_config);
+            mcp::save_mcp_config(&config_path_clone, &config)
+        }
+    })
+    .await
+    .map_err(|e| format!("任务执行失败: {}", e))?
+    .map_err(|e| e)?;
+    
+    Ok(())
+}
+
+// 保存整个 MCP 配置
+#[tauri::command]
+async fn save_mcp_config_full(
+    config: MCPConfig,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let config_path = mcp::get_mcp_config_path(&app_data_dir);
+    
+    tokio::task::spawn_blocking({
+        let config_path_clone = config_path.clone();
+        move || {
+            mcp::save_mcp_config(&config_path_clone, &config)
+        }
+    })
+    .await
+    .map_err(|e| format!("任务执行失败: {}", e))?
+    .map_err(|e| e)?;
+    
+    Ok(())
+}
+
+// 删除 MCP 配置
+#[tauri::command]
+async fn delete_mcp_config(
+    server_name: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let config_path = mcp::get_mcp_config_path(&app_data_dir);
+    
+    tokio::task::spawn_blocking({
+        let config_path_clone = config_path.clone();
+        move || {
+            let mut config = mcp::load_mcp_config(&config_path_clone)?;
+            config.mcp_servers.shift_remove(&server_name);
+            mcp::save_mcp_config(&config_path_clone, &config)
+        }
+    })
+    .await
+    .map_err(|e| format!("任务执行失败: {}", e))?
+    .map_err(|e| e)?;
+    
+    Ok(())
+}
+
+// 测试 MCP 连接并获取工具列表
+#[tauri::command]
+async fn test_mcp_connection(
+    server_name: String,
+    server_config: MCPServerConfig,
+) -> Result<MCPServerInfo, String> {
+    // 优先使用配置中的 name 字段，如果没有则使用 server_name
+    let display_name = server_config.name.as_ref().unwrap_or(&server_name).clone();
+    
+    match mcp::test_mcp_connection(&server_name, &server_config).await {
+        Ok(tools) => Ok(MCPServerInfo {
+            name: display_name,
+            key: Some(server_name.clone()), // 保存原始键名
+            config: server_config,
+            status: "connected".to_string(),
+            tools: Some(tools),
+            error: None,
+        }),
+        Err(e) => Ok(MCPServerInfo {
+            name: display_name,
+            key: Some(server_name.clone()), // 保存原始键名
+            config: server_config,
+            status: "error".to_string(),
+            tools: None,
+            error: Some(e),
+        }),
+    }
+}
+
+// AI 流式对话
+#[tauri::command]
+async fn chat_completion(
+    config_id: String,
+    messages: Vec<ai::ChatMessage>,
+    tools: Option<Vec<MCPTool>>,
+    system_message: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    // 获取 AI 配置
+    let app_data_dir = get_app_data_dir(&app)?;
+    let db_path = db::get_db_path(&app_data_dir);
+    
+    let ai_config = tokio::task::spawn_blocking({
+        let db_path_clone = db_path.clone();
+        let config_id_clone = config_id.clone();
+        move || {
+            let conn = db::init_database(&db_path_clone)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            db::get_ai_config(&conn, &config_id_clone)
+                .map_err(|e| format!("无法从数据库读取 AI 配置: {}", e))
+        }
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
+    
+    let ai_config = ai_config.ok_or("AI 配置不存在")?;
+    
+    // 构建消息列表（添加 system message）
+    let mut chat_messages = Vec::new();
+    if let Some(system_msg) = system_message {
+        chat_messages.push(ai::ChatMessage {
+            role: "system".to_string(),
+            content: Some(system_msg),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+        });
+    }
+    chat_messages.extend(messages);
+    
+    // 转换 MCP 工具为 OpenAI 工具
+    let openai_tools = if let Some(mcp_tools) = tools {
+        Some(
+            mcp_tools
+                .iter()
+                .map(ai::mcp_tool_to_openai_tool)
+                .collect(),
+        )
+    } else {
+        None
+    };
+    
+    // 构建请求
+    let request = ai::ChatCompletionRequest {
+        model: ai_config.model.clone(),
+        messages: chat_messages,
+        tools: openai_tools,
+        tool_choice: Some("auto".to_string()),
+        stream: true,
+        temperature: Some(0.7),
+    };
+    
+    // 构建 URL
+    let url = ai::build_chat_url(&ai_config.base_url);
+    
+    // 创建 HTTP 客户端
+    let client = reqwest::Client::new();
+    
+    // 发送请求
+    let response = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", ai_config.api_key))
+        .header("Content-Type", "application/json")
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| format!("发送请求失败: {}", e))?;
+    
+    // 生成事件 ID
+    let event_id = Uuid::new_v4().to_string();
+    let event_name = format!("ai-chat-stream-{}", event_id);
+    let event_id_clone = event_id.clone();
+    
+    // 读取流式响应
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+    let mut current_tool_calls: HashMap<u32, ai::ToolCallChunk> = HashMap::new();
+    
+    use futures_util::StreamExt;
+    
+    // 在后台任务中处理流
+    let app_clone = app.clone();
+    let event_name_clone = event_name.clone();
+    tokio::spawn(async move {
+        while let Some(chunk_result) = stream.next().await {
+            if let Ok(chunk) = chunk_result {
+                let text = String::from_utf8_lossy(chunk.as_ref());
+                buffer.push_str(&text);
+                
+                // 按行处理 SSE 数据
+                while let Some(newline_pos) = buffer.find('\n') {
+                    let line = buffer[..newline_pos].trim().to_string();
+                    buffer = buffer[newline_pos + 1..].to_string();
+                    
+                    if line.starts_with("data: ") {
+                        let data = &line[6..];
+                        if data == "[DONE]" {
+                            // 流结束
+                            let _ = app_clone.emit(&event_name_clone, &json!({
+                                "type": "done",
+                                "event_id": event_id_clone
+                            }));
+                            return;
+                        }
+                        
+                        // 解析 JSON
+                        if let Ok(chunk_data) = serde_json::from_str::<ai::ChatCompletionChunk>(data) {
+                            if let Some(choice) = chunk_data.choices.first() {
+                                let delta = &choice.delta;
+                                
+                                // 处理内容增量
+                                if let Some(content) = &delta.content {
+                                    let _ = app_clone.emit(&event_name_clone, &json!({
+                                        "type": "content",
+                                        "content": content,
+                                        "event_id": event_id_clone
+                                    }));
+                                }
+                                
+                                // 处理工具调用
+                                if let Some(tool_calls) = &delta.tool_calls {
+                                    for tool_call_chunk in tool_calls {
+                                        if let Some(index) = tool_call_chunk.index {
+                                            let tool_call = current_tool_calls
+                                                .entry(index)
+                                                .or_insert_with(|| ai::ToolCallChunk {
+                                                    index: Some(index),
+                                                    id: None,
+                                                    call_type: None,
+                                                    function: None,
+                                                });
+                                            
+                                            if let Some(id) = &tool_call_chunk.id {
+                                                tool_call.id = Some(id.clone());
+                                            }
+                                            if let Some(call_type) = &tool_call_chunk.call_type {
+                                                tool_call.call_type = Some(call_type.clone());
+                                            }
+                                            if let Some(function) = &tool_call_chunk.function {
+                                                let func = tool_call.function.get_or_insert_with(|| ai::FunctionCallChunk {
+                                                    name: None,
+                                                    arguments: None,
+                                                });
+                                                if let Some(name) = &function.name {
+                                                    func.name = Some(name.clone());
+                                                }
+                                                if let Some(args) = &function.arguments {
+                                                    func.arguments = Some(
+                                                        func.arguments.as_ref()
+                                                            .map(|a| format!("{}{}", a, args))
+                                                            .unwrap_or_else(|| args.clone())
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                // 如果完成，发送工具调用
+                                if let Some(finish_reason) = &choice.finish_reason {
+                                    if finish_reason == "tool_calls" && !current_tool_calls.is_empty() {
+                                        let tool_calls: Vec<serde_json::Value> = current_tool_calls
+                                            .values()
+                                            .map(|tc| {
+                                                json!({
+                                                    "id": tc.id.as_ref().unwrap_or(&"".to_string()),
+                                                    "type": tc.call_type.as_ref().unwrap_or(&"function".to_string()),
+                                                    "function": {
+                                                        "name": tc.function.as_ref()
+                                                            .and_then(|f| f.name.as_ref())
+                                                            .unwrap_or(&"".to_string()),
+                                                        "arguments": tc.function.as_ref()
+                                                            .and_then(|f| f.arguments.as_ref())
+                                                            .unwrap_or(&"".to_string()),
+                                                    }
+                                                })
+                                            })
+                                            .collect();
+                                        
+                                        let _ = app_clone.emit(&event_name_clone, &json!({
+                                            "type": "tool_calls",
+                                            "tool_calls": tool_calls,
+                                            "event_id": event_id_clone
+                                        }));
+                                        current_tool_calls.clear();
+                                    } else if finish_reason != "tool_calls" {
+                                        // 正常完成
+                                        let _ = app_clone.emit(&event_name_clone, &json!({
+                                            "type": "done",
+                                            "event_id": event_id_clone
+                                        }));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+    
+    Ok(event_id)
+}
+
+// 执行 MCP 工具调用
+#[tauri::command]
+async fn execute_mcp_tool_call(
+    server_name: String,
+    tool_name: String,
+    arguments: serde_json::Value,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    // 获取 MCP 配置
+    let app_data_dir = get_app_data_dir(&app)?;
+    let config_path = mcp::get_mcp_config_path(&app_data_dir);
+    
+    let config = tokio::task::spawn_blocking(move || {
+        mcp::load_mcp_config(&config_path)
+    })
+    .await
+    .map_err(|e| format!("任务执行失败: {}", e))?
+    .map_err(|e| e)?;
+    
+    let server_config = config.mcp_servers.get(&server_name)
+        .ok_or_else(|| format!("MCP 服务器 {} 不存在", server_name))?;
+    
+    // 检查是否是 HTTP 传输（支持两种格式）
+    let http_url = if let Some(transport_value) = &server_config.transport {
+        if let Some(transport_obj) = transport_value.as_object() {
+            if let Some(transport_type) = transport_obj.get("type").and_then(|v| v.as_str()) {
+                if transport_type == "http" {
+                    transport_obj.get("url").and_then(|v| v.as_str()).map(|s| s.to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else if let Some(url) = &server_config.url {
+        // Cursor 兼容格式
+        Some(url.clone())
+    } else {
+        None
+    };
+    
+    if let Some(url) = http_url {
+        // HTTP 传输：通过 HTTP API 调用工具
+        let client = reqwest::Client::new();
+        
+        // 构建工具调用请求
+        let tool_call_request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": tool_name,
+                "arguments": arguments
+            }
+        });
+        
+        let response = client
+            .post(&url)
+            .json(&tool_call_request)
+            .send()
+            .await
+            .map_err(|e| format!("HTTP 请求失败: {}", e))?;
+        
+        let result: serde_json::Value = response.json().await
+            .map_err(|e| format!("解析响应失败: {}", e))?;
+        
+        // 提取结果
+        if let Some(result_obj) = result.get("result") {
+            if let Some(content) = result_obj.get("content") {
+                return Ok(content.clone());
+            }
+            return Ok(result_obj.clone());
+        }
+        
+        if let Some(error) = result.get("error") {
+            return Err(format!("工具调用失败: {}", error));
+        }
+        
+        return Ok(result);
+    }
+    
+    // stdio 传输：启动 MCP 服务器并调用工具
+    let command = server_config.command.as_ref()
+        .ok_or_else(|| format!("stdio 传输需要 command 字段，或 HTTP 传输需要 transport 或 url 字段"))?;
+    
+    let mut cmd = tokio::process::Command::new(command);
+    
+    if let Some(args) = &server_config.args {
+        for arg in args {
+            cmd.arg(arg);
+        }
+    }
+    
+    if let Some(env) = &server_config.env {
+        for (key, value) in env {
+            cmd.env(key, value);
+        }
+    }
+    
+    cmd.stdin(std::process::Stdio::piped());
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    
+    let mut child = cmd.spawn()
+        .map_err(|e| format!("无法启动 MCP 服务器: {}", e))?;
+    
+    let mut stdin = child.stdin.take().ok_or("无法获取 stdin")?;
+    let stdout = child.stdout.take().ok_or("无法获取 stdout")?;
+    
+    // 发送 initialize 请求
+    let init_request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {
+                "name": "qqh-tauri",
+                "version": "0.1.0"
+            }
+        }
+    });
+    
+    use tokio::io::{AsyncWriteExt, BufReader, AsyncBufReadExt};
+    let mut writer = tokio::io::BufWriter::new(&mut stdin);
+    writer.write_all(format!("{}\n", serde_json::to_string(&init_request).unwrap()).as_bytes()).await
+        .map_err(|e| format!("无法发送初始化请求: {}", e))?;
+    writer.flush().await.map_err(|e| format!("无法刷新 stdin: {}", e))?;
+    
+    // 读取初始化响应
+    let mut reader = BufReader::new(stdout);
+    let mut line = String::new();
+    let timeout = tokio::time::Duration::from_secs(5);
+    let _ = tokio::time::timeout(timeout, reader.read_line(&mut line)).await;
+    
+    // 发送 initialized 通知
+    let initialized_notification = json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized"
+    });
+    writer.write_all(format!("{}\n", serde_json::to_string(&initialized_notification).unwrap()).as_bytes()).await
+        .map_err(|e| format!("无法发送 initialized 通知: {}", e))?;
+    writer.flush().await.map_err(|e| format!("无法刷新 stdin: {}", e))?;
+    
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    
+    // 调用工具
+    let call_request = json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": tool_name,
+            "arguments": arguments
+        }
+    });
+    
+    writer.write_all(format!("{}\n", serde_json::to_string(&call_request).unwrap()).as_bytes()).await
+        .map_err(|e| format!("无法发送工具调用请求: {}", e))?;
+    writer.flush().await.map_err(|e| format!("无法刷新 stdin: {}", e))?;
+    
+    // 读取响应
+    let mut response_line = String::new();
+    let response_result = tokio::time::timeout(timeout, reader.read_line(&mut response_line)).await
+        .map_err(|_| "读取工具调用响应超时")?;
+    
+    response_result.map_err(|e| format!("读取响应失败: {}", e))?;
+    
+    drop(writer);
+    
+    // 解析响应
+    let response: serde_json::Value = serde_json::from_str(&response_line)
+        .map_err(|e| format!("无法解析响应: {}", e))?;
+    
+    if let Some(error) = response.get("error") {
+        return Err(format!("工具调用失败: {}", error));
+    }
+    
+    if let Some(result) = response.get("result") {
+        Ok(result.clone())
+    } else {
+        Err("响应中没有结果".to_string())
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1829,6 +2499,14 @@ pub fn run() {
             create_ai_config,
             update_ai_config,
             delete_ai_config,
+            get_mcp_configs,
+            get_mcp_config_full,
+            save_mcp_config,
+            save_mcp_config_full,
+            delete_mcp_config,
+            test_mcp_connection,
+            chat_completion,
+            execute_mcp_tool_call,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -2,9 +2,12 @@ import { useState, useEffect, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { openPath } from '@tauri-apps/plugin-opener'
-import { ModelInfo, ModelDownloadProgress, AIConfig } from '../models'
-import { HiXCircle, HiArrowDownTray, HiFolderOpen, HiPencil, HiTrash, HiPlus, HiCheckCircle } from 'react-icons/hi2'
+import { ModelInfo, ModelDownloadProgress, AIConfig, MCPServerInfo, MCPServerConfig, MCPConfig } from '../models'
+import { HiXCircle, HiArrowDownTray, HiFolderOpen, HiPencil, HiTrash, HiPlus, HiCheckCircle, HiChevronDown, HiChevronUp, HiArrowPath } from 'react-icons/hi2'
 import { useMessage } from '../componets/Toast'
+import { useAppDispatch, useAppSelector } from '../redux/hooks'
+import { refreshMCPConfigs } from '../redux/slices/mcpSlice'
+import { refreshAIConfigs } from '../redux/slices/aiConfigSlice'
 
 const SettingsGeneralPage = () => {
   const [models, setModels] = useState<ModelInfo[]>([])
@@ -104,6 +107,9 @@ const SettingsGeneralPage = () => {
       {/* AI 配置管理 */}
       <AIConfigBlock />
 
+      {/* MCP 配置管理 */}
+      <MCPConfigBlock />
+
       {/* 模型下载弹出框始终挂载以保留下载状态 */}
       <ModelDownloadModal
         isOpen={showDownloadModal}
@@ -117,30 +123,22 @@ const SettingsGeneralPage = () => {
 // AI 配置管理组件
 const AIConfigBlock = () => {
   const message = useMessage()
-  const [configs, setConfigs] = useState<AIConfig[]>([])
-  const [loading, setLoading] = useState(false)
+  const dispatch = useAppDispatch()
+  const { configs, loading, error } = useAppSelector((state) => state.aiConfig)
   const [showAddModal, setShowAddModal] = useState(false)
   const [editingConfig, setEditingConfig] = useState<AIConfig | null>(null)
   const [deletingConfig, setDeletingConfig] = useState<AIConfig | null>(null)
 
-  // 加载配置列表
-  const loadConfigs = async () => {
+  // 刷新配置
+  const handleRefresh = async () => {
     try {
-      setLoading(true)
-      const configsList = await invoke<AIConfig[]>('get_ai_configs')
-      setConfigs(configsList)
+      await dispatch(refreshAIConfigs()).unwrap()
+      message.success('刷新成功')
     } catch (err) {
-      console.error('加载 AI 配置失败:', err)
-      message.error('加载 AI 配置失败')
-    } finally {
-      setLoading(false)
+      const errorMsg = err instanceof Error ? err.message : '刷新失败'
+      message.error(errorMsg)
     }
   }
-
-  useEffect(() => {
-    loadConfigs()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   // 删除配置
   const handleDelete = async (config: AIConfig) => {
@@ -154,7 +152,8 @@ const AIConfigBlock = () => {
       await invoke('delete_ai_config', { id: deletingConfig.id })
       message.success('删除成功')
       setDeletingConfig(null)
-      await loadConfigs()
+      // 刷新 Redux store
+      await dispatch(refreshAIConfigs()).unwrap()
     } catch (err) {
       console.error('删除 AI 配置失败:', err)
       message.error('删除失败')
@@ -162,19 +161,36 @@ const AIConfigBlock = () => {
   }
 
   return (
-    <div className="card card-border bg-base-100 shadow-sm">
+      <div className="card card-border bg-base-100 shadow-sm">
       <div className="card-body">
         <div className="flex items-center justify-between mb-4">
           <h2 className="card-title">AI 配置</h2>
-          <button
-            className="btn btn-sm btn-primary"
-            onClick={() => setShowAddModal(true)}
-          >
-            <HiPlus className="h-4 w-4" />
-            <span className="ml-1">添加</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              className="btn btn-sm btn-ghost"
+              onClick={handleRefresh}
+              disabled={loading}
+              title="刷新"
+            >
+              <HiArrowPath className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              <span className="ml-1">刷新</span>
+            </button>
+            <button
+              className="btn btn-sm btn-primary"
+              onClick={() => setShowAddModal(true)}
+            >
+              <HiPlus className="h-4 w-4" />
+              <span className="ml-1">添加</span>
+            </button>
+          </div>
         </div>
 
+        {error && (
+          <div className="alert alert-error mb-4">
+            <HiXCircle className="h-6 w-6" />
+            <span>{error}</span>
+          </div>
+        )}
         {loading ? (
           <div className="flex items-center justify-center py-8">
             <span className="loading loading-spinner loading-md"></span>
@@ -194,7 +210,7 @@ const AIConfigBlock = () => {
                   <th>Base URL</th>
                   <th>API Key</th>
                   <th>Model</th>
-                  <th>操作</th>
+                  <th className="w-100 text-right">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -219,7 +235,8 @@ const AIConfigBlock = () => {
           onClose={() => setShowAddModal(false)}
           onSave={async () => {
             setShowAddModal(false)
-            await loadConfigs()
+            // 刷新 Redux store
+            await dispatch(refreshAIConfigs()).unwrap()
           }}
         />
       )}
@@ -232,7 +249,8 @@ const AIConfigBlock = () => {
           onClose={() => setEditingConfig(null)}
           onSave={async () => {
             setEditingConfig(null)
-            await loadConfigs()
+            // 刷新 Redux store
+            await dispatch(refreshAIConfigs()).unwrap()
           }}
         />
       )}
@@ -276,8 +294,8 @@ const AIConfigTableRow = ({
         </div>
       </td>
       <td>{config.model}</td>
-      <td>
-        <div className="flex gap-2">
+      <td className="text-right">
+        <div className="flex gap-2 justify-end">
           <button
             className="btn btn-sm btn-ghost"
             onClick={onEdit}
@@ -786,6 +804,579 @@ const ModelDownloadModal = ({
           onConfirm={handleConfirmDeleteModel}
         />
       )}
+    </div>
+  )
+}
+
+// MCP 配置管理组件
+const MCPConfigBlock = () => {
+  const message = useMessage()
+  const dispatch = useAppDispatch()
+  const { servers, loading, error } = useAppSelector((state) => state.mcp)
+  const [showSettingsModal, setShowSettingsModal] = useState(false)
+  const [deletingServer, setDeletingServer] = useState<string | null>(null)
+  const [viewingServer, setViewingServer] = useState<MCPServerInfo | null>(null)
+
+  // 刷新配置
+  const handleRefresh = async () => {
+    try {
+      await dispatch(refreshMCPConfigs()).unwrap()
+      message.success('刷新成功')
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : '刷新失败'
+      message.error(errorMsg)
+    }
+  }
+
+  // 删除配置
+  const handleDelete = (server: MCPServerInfo) => {
+    // 使用原始键名（key）或服务器名称进行删除
+    setDeletingServer(server.key || server.name)
+  }
+
+  // 确认删除
+  const handleConfirmDelete = async () => {
+    if (!deletingServer) return
+    try {
+      // deletingServer 存储的是原始键名
+      await invoke('delete_mcp_config', { serverName: deletingServer })
+      message.success('删除成功')
+      setDeletingServer(null)
+      // 刷新 Redux store
+      await dispatch(refreshMCPConfigs()).unwrap()
+    } catch (err) {
+      console.error('删除 MCP 配置失败:', err)
+      message.error('删除失败')
+    }
+  }
+
+  // 查看工具列表
+  const handleViewTools = (server: MCPServerInfo) => {
+    setViewingServer(server)
+  }
+
+  return (
+      <div className="card card-border bg-base-100 shadow-sm">
+      <div className="card-body">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="card-title">Tools & MCP</h2>
+          <div className="flex items-center gap-2">
+            <button
+              className="btn btn-sm btn-ghost"
+              onClick={handleRefresh}
+              disabled={loading}
+              title="刷新"
+            >
+              <HiArrowPath className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              <span className="ml-1">刷新</span>
+            </button>
+            <button
+              className="btn btn-sm btn-primary"
+              onClick={() => setShowSettingsModal(true)}
+            >
+              <HiPencil className="h-4 w-4" />
+              <span className="ml-1">设置</span>
+            </button>
+          </div>
+        </div>
+
+        {error && (
+          <div className="alert alert-error mb-4">
+            <HiXCircle className="h-6 w-6" />
+            <span>{error}</span>
+          </div>
+        )}
+        {loading ? (
+          <div className="flex items-center justify-center py-8">
+            <span className="loading loading-spinner loading-md"></span>
+            <span className="ml-2">加载配置列表中...</span>
+          </div>
+        ) : servers.length === 0 ? (
+          <div className="text-center py-8 text-base-content/50">
+            <p>暂无 MCP 配置</p>
+            <p className="text-sm mt-2">点击【设置】按钮配置 MCP 服务器</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="table table-zebra w-full">
+              <thead>
+                <tr>
+                  <th>名称</th>
+                  <th>工具数量</th>
+                  <th className="w-100 text-right">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {servers.map((server) => (
+                  <MCPTableRow
+                    key={server.name}
+                    server={server}
+                    onDelete={() => handleDelete(server)}
+                    onViewTools={() => handleViewTools(server)}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* 设置弹窗 */}
+      {showSettingsModal && (
+        <MCPConfigModal
+          isOpen={showSettingsModal}
+          onClose={() => setShowSettingsModal(false)}
+          onSave={async () => {
+            setShowSettingsModal(false)
+            // 刷新 Redux store
+            await dispatch(refreshMCPConfigs()).unwrap()
+          }}
+        />
+      )}
+
+      {/* 删除确认弹窗 */}
+      {deletingServer && (() => {
+        const serverToDelete = servers.find(s => (s.key || s.name) === deletingServer)
+        const displayName = serverToDelete?.config.name || serverToDelete?.name || deletingServer
+        return (
+          <DeleteConfirmModal
+            isOpen={!!deletingServer}
+            configName={displayName}
+            onClose={() => setDeletingServer(null)}
+            onConfirm={handleConfirmDelete}
+          />
+        )
+      })()}
+
+      {/* 工具列表弹窗 */}
+      {viewingServer && (
+        <MCPToolsModal
+          isOpen={!!viewingServer}
+          server={viewingServer}
+          onClose={() => setViewingServer(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+// MCP 表格行组件
+interface MCPTableRowProps {
+  server: MCPServerInfo
+  onDelete: () => void
+  onViewTools: () => void
+}
+
+const MCPTableRow = ({
+  server,
+  onDelete,
+  onViewTools,
+}: MCPTableRowProps) => {
+  const toolsCount = server.tools?.length || 0
+  
+  // 获取状态点的颜色
+  const getStatusDotColor = () => {
+    switch (server.status) {
+      case 'connected':
+        return 'bg-success'
+      case 'error':
+        return 'bg-error'
+      default:
+        return 'bg-base-content/30'
+    }
+  }
+
+  return (
+    <tr>
+      <td>
+        <div className="flex items-center gap-2">
+          <span
+            className={`w-2 h-2 rounded-full ${getStatusDotColor()}`}
+            title={
+              server.status === 'connected'
+                ? '已连接'
+                : server.status === 'error'
+                ? `连接错误: ${server.error || '未知错误'}`
+                : '未连接'
+            }
+          />
+          <span className="font-medium">{server.config.name || server.name}</span>
+        </div>
+      </td>
+      <td>
+        {(toolsCount > 0 || server.error) ? (
+          <button
+            className="btn btn-ghost btn-xs"
+            onClick={onViewTools}
+          >
+            {server.error ? '查看错误' : `${toolsCount} 个工具`}
+          </button>
+        ) : (
+          <span className="text-base-content/50">0</span>
+        )}
+      </td>
+      <td className="text-right">
+        <div className="flex gap-2 justify-end">
+          <button
+            className="btn btn-sm btn-ghost text-error"
+            onClick={onDelete}
+            title="删除"
+          >
+            <HiTrash className="h-4 w-4" />
+          </button>
+        </div>
+      </td>
+    </tr>
+  )
+}
+
+// MCP 工具列表弹窗
+interface MCPToolsModalProps {
+  isOpen: boolean
+  server: MCPServerInfo
+  onClose: () => void
+}
+
+const MCPToolsModal = ({ isOpen, server, onClose }: MCPToolsModalProps) => {
+  const [expandedTools, setExpandedTools] = useState<Set<number>>(new Set())
+
+  // 切换工具展开/折叠
+  const toggleTool = (index: number) => {
+    setExpandedTools((prev) => {
+      const newSet = new Set(prev)
+      if (newSet.has(index)) {
+        newSet.delete(index)
+      } else {
+        newSet.add(index)
+      }
+      return newSet
+    })
+  }
+
+  if (!isOpen) return null
+
+  return (
+    <div className="modal modal-open">
+      <div className="modal-box max-w-2xl">
+        <h3 className="font-bold text-lg mb-4">
+          {server.config.name || server.name} - {server.error ? '连接错误' : '工具列表'}
+        </h3>
+
+        <div className="space-y-4">
+          {server.error ? (
+            <div className="bg-error/10 border border-error/20 rounded-lg p-4">
+              <div className="font-medium text-error mb-2">连接错误</div>
+              <div className="text-sm text-error/70">
+                {server.error}
+              </div>
+            </div>
+          ) : server.tools && server.tools.length > 0 ? (
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {server.tools.map((tool, index) => {
+                const isExpanded = expandedTools.has(index)
+                const hasParams = tool.inputSchema.properties && Object.keys(tool.inputSchema.properties).length > 0
+
+                return (
+                  <div
+                    key={index}
+                    className="bg-base-200 rounded-lg border border-base-300"
+                  >
+                    {/* 工具标题区域 - 可点击 */}
+                    <button
+                      className={`w-full text-left p-4 flex items-center justify-between transition-colors ${
+                        hasParams ? 'hover:bg-base-300/50 cursor-pointer' : 'cursor-default'
+                      }`}
+                      onClick={() => hasParams && toggleTool(index)}
+                    >
+                      <div className="flex-1">
+                        <div className="font-medium text-base">{tool.name}</div>
+                        {tool.description && (
+                          <div className="text-sm text-base-content/70 mt-1">
+                            {tool.description}
+                          </div>
+                        )}
+                      </div>
+                      {hasParams && (
+                        <div className="ml-2 flex-shrink-0">
+                          {isExpanded ? (
+                            <HiChevronUp className="h-5 w-5 text-base-content/50" />
+                          ) : (
+                            <HiChevronDown className="h-5 w-5 text-base-content/50" />
+                          )}
+                        </div>
+                      )}
+                    </button>
+
+                    {/* 参数详情区域 - 可展开/折叠 */}
+                    {isExpanded && hasParams && tool.inputSchema.properties && (
+                      <div className="px-4 pb-4 pt-2 border-t border-base-300">
+                        <div className="text-xs font-semibold text-base-content/60 mb-2">参数：</div>
+                        <div className="space-y-2">
+                          {Object.entries(tool.inputSchema.properties).map(([paramName, param]) => (
+                            <div key={paramName} className="text-xs bg-base-300 rounded p-2">
+                              <div className="font-mono font-medium text-primary">
+                                {paramName}
+                                {tool.inputSchema.required?.includes(paramName) && (
+                                  <span className="text-error ml-1">*</span>
+                                )}
+                              </div>
+                              <div className="text-base-content/70 mt-1">
+                                <span className="text-base-content/50">类型: </span>
+                                {param.type}
+                              </div>
+                              {param.description && (
+                                <div className="text-base-content/70 mt-1">
+                                  {param.description}
+                                </div>
+                              )}
+                              {param.enum && (
+                                <div className="text-base-content/70 mt-1">
+                                  <span className="text-base-content/50">可选值: </span>
+                                  {param.enum.join(', ')}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="text-center py-8 text-base-content/50">
+              <p>该服务器没有可用工具</p>
+            </div>
+          )}
+        </div>
+
+        <div className="modal-action">
+          <button className="btn" onClick={onClose}>
+            关闭
+          </button>
+        </div>
+      </div>
+      <div className="modal-backdrop" onClick={onClose}></div>
+    </div>
+  )
+}
+
+// MCP 配置设置弹窗
+interface MCPConfigModalProps {
+  isOpen: boolean
+  server?: MCPServerInfo | null
+  onClose: () => void
+  onSave: () => void
+}
+
+const MCPConfigModal = ({
+  isOpen,
+  server,
+  onClose,
+  onSave,
+}: MCPConfigModalProps) => {
+  const message = useMessage()
+  const isEditMode = !!server
+  const [jsonContent, setJsonContent] = useState('')
+  const [jsonError, setJsonError] = useState<string | null>(null)
+
+  // 加载配置
+  useEffect(() => {
+    const loadConfig = async () => {
+      try {
+        if (isEditMode && server) {
+          // 编辑单个服务器：只显示该服务器的配置（不包含 mcpServers 包装）
+          setJsonContent(JSON.stringify(server.config, null, 2))
+        } else {
+          // 设置模式：加载完整配置
+          const config = await invoke<MCPConfig>('get_mcp_config_full')
+          setJsonContent(JSON.stringify(config, null, 2))
+        }
+      } catch (err) {
+        console.error('加载 MCP 配置失败:', err)
+        // 如果加载失败，使用默认模板
+        if (isEditMode) {
+          setJsonContent('{}')
+        } else {
+          const defaultConfig: MCPConfig = {
+            mcpServers: {},
+          }
+          setJsonContent(JSON.stringify(defaultConfig, null, 2))
+        }
+      }
+      setJsonError(null)
+    }
+    if (isOpen) {
+      loadConfig()
+    }
+  }, [isOpen, isEditMode, server])
+
+  // 验证 JSON
+  const validateJson = (content: string, isServerConfig: boolean): boolean => {
+    try {
+      if (isServerConfig) {
+        // 验证单个服务器配置
+        const parsed = JSON.parse(content) as MCPServerConfig
+        
+        // 检查新格式的 transport 字段
+        if (parsed.transport) {
+          const transport = parsed.transport as any
+          if (transport.type === 'stdio') {
+            // Stdio 传输
+            if (!transport.command) {
+              setJsonError('transport.command 是必需的（stdio 传输）')
+              return false
+            }
+          } else if (transport.type === 'http') {
+            // HTTP 传输
+            if (!transport.url) {
+              setJsonError('transport.url 是必需的（http 传输）')
+              return false
+            }
+          } else {
+            setJsonError('transport.type 必须是 "stdio" 或 "http"')
+            return false
+          }
+        } else {
+          // 检查旧格式：至少有一个传输方式
+          if (!parsed.command && !parsed.url) {
+            setJsonError('配置必须包含 command（stdio）或 transport/url（http）字段')
+            return false
+          }
+        }
+      } else {
+        // 验证完整配置（支持新旧两种格式）
+        const parsed = JSON.parse(content) as any
+        
+        // 检查是否是旧格式（包含 mcpServers）
+        if (parsed.mcpServers) {
+          if (typeof parsed.mcpServers !== 'object') {
+            setJsonError('mcpServers 必须是对象')
+            return false
+          }
+        } else {
+          // 新格式：服务器配置直接作为顶层对象
+          // 检查是否至少有一个服务器配置
+          const serverKeys = Object.keys(parsed).filter(key => key !== 'mcpServers')
+          if (serverKeys.length === 0) {
+            setJsonError('配置必须包含至少一个服务器配置')
+            return false
+          }
+          
+          // 验证每个服务器配置
+          for (const key of serverKeys) {
+            const serverConfig = parsed[key]
+            if (!serverConfig || typeof serverConfig !== 'object') {
+              setJsonError(`服务器配置 "${key}" 必须是对象`)
+              return false
+            }
+            
+            // 检查是否有 transport 字段
+            if (serverConfig.transport) {
+              const transport = serverConfig.transport
+              if (transport.type === 'stdio' && !transport.command) {
+                setJsonError(`服务器 "${key}": transport.command 是必需的（stdio 传输）`)
+                return false
+              } else if (transport.type === 'http' && !transport.url) {
+                setJsonError(`服务器 "${key}": transport.url 是必需的（http 传输）`)
+                return false
+              } else if (transport.type !== 'stdio' && transport.type !== 'http') {
+                setJsonError(`服务器 "${key}": transport.type 必须是 "stdio" 或 "http"`)
+                return false
+              }
+            } else if (!serverConfig.command && !serverConfig.url) {
+              setJsonError(`服务器 "${key}": 必须包含 command（stdio）或 transport/url（http）字段`)
+              return false
+            }
+          }
+        }
+      }
+      setJsonError(null)
+      return true
+    } catch (e) {
+      setJsonError(`JSON 格式错误: ${e instanceof Error ? e.message : '未知错误'}`)
+      return false
+    }
+  }
+
+  const handleSave = async () => {
+    if (!validateJson(jsonContent, isEditMode)) {
+      message.error('JSON 配置格式错误')
+      return
+    }
+
+    try {
+      if (isEditMode && server) {
+        // 编辑模式：更新单个服务器配置
+        const serverConfig = JSON.parse(jsonContent) as MCPServerConfig
+        
+        await invoke('save_mcp_config', {
+          serverName: server.name,
+          serverConfig: serverConfig,
+        })
+      } else {
+        // 设置模式：保存完整配置
+        const parsed = JSON.parse(jsonContent) as MCPConfig
+        await invoke('save_mcp_config_full', { config: parsed })
+      }
+
+      message.success(isEditMode ? '更新成功' : '保存成功')
+      onSave()
+    } catch (err) {
+      console.error(isEditMode ? '更新 MCP 配置失败:' : '保存 MCP 配置失败:', err)
+      message.error(isEditMode ? '更新失败' : '保存失败')
+    }
+  }
+
+  if (!isOpen) return null
+
+  return (
+    <div className="modal modal-open">
+      <div className="modal-box max-w-3xl">
+        <h3 className="font-bold text-lg mb-4">
+          {isEditMode ? '编辑 MCP 配置' : 'MCP 设置'}
+        </h3>
+
+        <div className="space-y-4">
+          <div>
+            <label className="label">
+              <span className="label-text">配置 JSON</span>
+            </label>
+            <textarea
+              className={`textarea textarea-bordered w-full font-mono text-sm ${
+                jsonError ? 'textarea-error' : ''
+              }`}
+              value={jsonContent}
+              onChange={(e) => {
+                setJsonContent(e.target.value)
+                validateJson(e.target.value, isEditMode)
+              }}
+              rows={20}
+              placeholder={
+                isEditMode
+                  ? '{\n  "name": "MCP Server",\n  "type": "stdio",\n  "enabled": true,\n  "transport": {\n    "type": "stdio",\n    "command": "npx",\n    "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"],\n    "workingDir": ".",\n    "env": {}\n  }\n}\n\n或\n\n{\n  "transport": {\n    "type": "http",\n    "url": "http://localhost:3001/api/servers/filesystem/mcp"\n  }\n}'
+                  : '{\n  "server-name": {\n    "name": "MCP Server",\n    "type": "stdio",\n    "enabled": true,\n    "transport": {\n      "type": "stdio",\n      "command": "npx",\n      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"]\n    }\n  }\n}\n\n或旧格式：\n\n{\n  "mcpServers": {\n    "server-name": {\n      "command": "node",\n      "args": ["server.js"]\n    }\n  }\n}'
+              }
+            />
+            {jsonError && (
+              <div className="label">
+                <span className="label-text-alt text-error">{jsonError}</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="modal-action">
+          <button className="btn" onClick={onClose}>
+            取消
+          </button>
+          <button className="btn btn-primary" onClick={handleSave}>
+            保存
+          </button>
+        </div>
+      </div>
+      <div className="modal-backdrop" onClick={onClose}></div>
     </div>
   )
 }

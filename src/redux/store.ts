@@ -4,6 +4,8 @@ import themeReducer from './slices/themeSlice';
 import transcriptionLogsReducer from './slices/transcriptionLogsSlice';
 import videoExtractionReducer from './slices/videoExtractionSlice';
 import sidePanelReducer from './slices/sidePanelSlice';
+import mcpReducer from './slices/mcpSlice';
+import aiConfigReducer from './slices/aiConfigSlice';
 
 export const store = configureStore({
   reducer: {
@@ -12,6 +14,8 @@ export const store = configureStore({
     transcriptionLogs: transcriptionLogsReducer,
     videoExtraction: videoExtractionReducer,
     sidePanel: sidePanelReducer,
+    mcp: mcpReducer,
+    aiConfig: aiConfigReducer,
   },
 });
 
