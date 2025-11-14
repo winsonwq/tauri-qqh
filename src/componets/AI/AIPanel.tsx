@@ -14,6 +14,11 @@ import { useAppSelector } from '../../redux/hooks'
 import Tooltip from '../Tooltip'
 import { formatDateTime } from '../../utils/format'
 
+// 生成唯一事件 ID
+function generateEventId(): string {
+  return `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`
+}
+
 interface AIMessage {
   id: string
   role: 'user' | 'assistant' | 'tool'
@@ -711,15 +716,24 @@ const AIPanel = () => {
     // 异步调用 API（只调用一次）
     const tools = getAvailableTools()
     try {
-      const eventId = await invoke<string>('chat_completion', {
+      // 在前端生成 eventId，这样可以先设置监听器，避免丢失第一个事件
+      const eventId = generateEventId()
+      console.log('[AI Frontend] 生成 eventId (工具调用继续):', eventId)
+
+      setCurrentStreamEventId(eventId)
+      setIsStreaming(true)
+      
+      // 先设置监听器，然后再调用后端
+      handleStreamResponse(eventId, chatId)
+      
+      // 调用流式 API（传递 eventId）
+      await invoke<string>('chat_completion', {
         configId: selectedConfigId,
         messages: chatMessages,
         tools: tools.length > 0 ? tools : null,
         systemMessage: systemMessage,
+        eventId: eventId,
       })
-      setCurrentStreamEventId(eventId)
-      setIsStreaming(true)
-      handleStreamResponse(eventId, chatId)
     } catch (err) {
       console.error('AI 对话失败:', err)
       message.error(`AI 对话失败: ${err}`)
@@ -791,20 +805,25 @@ const AIPanel = () => {
       // 获取可用工具
       const tools = getAvailableTools()
 
-      // 调用流式 API
+      // 在前端生成 eventId，这样可以先设置监听器，避免丢失第一个事件
+      const eventId = generateEventId()
+      console.log('[AI Frontend] 生成 eventId:', eventId)
+
+      setCurrentStreamEventId(eventId)
+      setIsStreaming(true)
+      
+      // 先设置监听器，然后再调用后端
+      await handleStreamResponse(eventId, chatId!)
+      
+      // 调用流式 API（传递 eventId）
       console.log('[AI Frontend] 调用 chat_completion，configId:', effectiveConfigId)
-      const eventId = await invoke<string>('chat_completion', {
+      await invoke<string>('chat_completion', {
         configId: effectiveConfigId,
         messages: chatMessages,
         tools: tools.length > 0 ? tools : null,
         systemMessage: systemMessage,
+        eventId: eventId,
       })
-      
-      console.log('[AI Frontend] 收到 eventId:', eventId)
-
-      setCurrentStreamEventId(eventId)
-      setIsStreaming(true)
-      await handleStreamResponse(eventId, chatId!)
     } catch (err) {
       console.error('AI 对话失败:', err)
       message.error(`AI 对话失败: ${err}`)

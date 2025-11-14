@@ -2131,6 +2131,7 @@ async fn chat_completion(
     messages: Vec<ai::ChatMessage>,
     tools: Option<Vec<MCPTool>>,
     system_message: Option<String>,
+    event_id: Option<String>,
     app: tauri::AppHandle,
     streams: State<'_, RunningStreams>,
 ) -> Result<String, String> {
@@ -2232,8 +2233,8 @@ async fn chat_completion(
         return Err(format!("AI API 返回错误: {} - {}\n使用的 URL: {}", status, error_text, url));
     }
     
-    // 生成事件 ID
-    let event_id = Uuid::new_v4().to_string();
+    // 生成事件 ID（如果未提供，则生成新的）
+    let event_id = event_id.unwrap_or_else(|| Uuid::new_v4().to_string());
     let event_name = format!("ai-chat-stream-{}", event_id);
     let event_id_clone = event_id.clone();
     
