@@ -641,9 +641,10 @@ const AIPanel = () => {
       }
     }
 
-    // 添加工具结果消息
+    // 使用函数式更新来获取最新的消息列表，并计算更新后的消息
+    let updatedMessages: AIMessage[] = []
     setMessages((prev) => {
-      const updatedMessages = [...prev, ...toolResults]
+      updatedMessages = [...prev, ...toolResults]
       
       // 保存工具结果消息到数据库
       for (const toolResult of toolResults) {
@@ -660,39 +661,38 @@ const AIPanel = () => {
         })
       }
 
-      // 继续对话（使用更新后的消息列表）
-      const chatMessages = updatedMessages
-        .filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'tool')
-        .map((m) => ({
-          role: m.role,
-          content: m.content,
-          tool_calls: m.tool_calls,
-          tool_call_id: m.tool_call_id,
-          name: m.name,
-        }))
+      return updatedMessages
+    })
 
-      // 异步调用 API
-      const tools = getAvailableTools()
-      invoke<string>('chat_completion', {
+    // 继续对话（使用更新后的消息列表，在 setMessages 回调外部调用，避免重复请求）
+    const chatMessages = updatedMessages
+      .filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'tool')
+      .map((m) => ({
+        role: m.role,
+        content: m.content,
+        tool_calls: m.tool_calls,
+        tool_call_id: m.tool_call_id,
+        name: m.name,
+      }))
+
+    // 异步调用 API（只调用一次）
+    const tools = getAvailableTools()
+    try {
+      const eventId = await invoke<string>('chat_completion', {
         configId: selectedConfigId,
         messages: chatMessages,
         tools: tools.length > 0 ? tools : null,
         systemMessage: systemMessage,
       })
-        .then((eventId) => {
-          setCurrentStreamEventId(eventId)
-          setIsStreaming(true)
-          handleStreamResponse(eventId, chatId)
-        })
-        .catch((err) => {
-          console.error('AI 对话失败:', err)
-          message.error(`AI 对话失败: ${err}`)
-          setIsStreaming(false)
-          setCurrentStreamEventId(null)
-        })
-
-      return updatedMessages
-    })
+      setCurrentStreamEventId(eventId)
+      setIsStreaming(true)
+      handleStreamResponse(eventId, chatId)
+    } catch (err) {
+      console.error('AI 对话失败:', err)
+      message.error(`AI 对话失败: ${err}`)
+      setIsStreaming(false)
+      setCurrentStreamEventId(null)
+    }
   }
 
   const handleSend = async (messageText: string, configId?: string) => {
