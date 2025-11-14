@@ -12,6 +12,7 @@ import { MCPServerInfo, MCPTool, Chat, ChatListItem, Message as ChatMessage } fr
 import { useMessage } from '../Toast'
 import { useAppSelector } from '../../redux/hooks'
 import Tooltip from '../Tooltip'
+import { formatDateTime } from '../../utils/format'
 
 interface AIMessage {
   id: string
@@ -40,7 +41,7 @@ const renderMessageContent = (content: string) => {
 const renderTimestamp = (timestamp: Date) => {
   return (
     <div className="text-xs mt-2 text-base-content/60">
-      {timestamp.toLocaleTimeString()}
+      {formatDateTime(timestamp)}
     </div>
   )
 }
