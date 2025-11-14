@@ -29,9 +29,10 @@
   top: 12px;
   left: 12px;
   pointer-events: none;
-  color: hsl(var(--bc) / 0.5);
+  color: hsl(var(--bc) / 0.4);
   font-size: 14px;
   user-select: none;
+  opacity: 0.4;
 }
 
 .rich-text-editor-paragraph {
