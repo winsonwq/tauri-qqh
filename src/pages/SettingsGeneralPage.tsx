@@ -830,6 +830,10 @@ const MCPConfigBlock = () => {
 
   // 删除配置
   const handleDelete = (server: MCPServerInfo) => {
+    // 默认服务不允许删除
+    if (server.is_default) {
+      return
+    }
     // 使用原始键名（key）或服务器名称进行删除
     setDeletingServer(server.key || server.name)
   }
@@ -1017,13 +1021,15 @@ const MCPTableRow = ({
       </td>
       <td className="text-right">
         <div className="flex gap-2 justify-end">
-          <button
-            className="btn btn-sm btn-ghost text-error"
-            onClick={onDelete}
-            title="删除"
-          >
-            <HiTrash className="h-4 w-4" />
-          </button>
+          {!server.is_default && (
+            <button
+              className="btn btn-sm btn-ghost text-error"
+              onClick={onDelete}
+              title="删除"
+            >
+              <HiTrash className="h-4 w-4" />
+            </button>
+          )}
         </div>
       </td>
     </tr>

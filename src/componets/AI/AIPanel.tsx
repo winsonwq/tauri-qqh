@@ -622,7 +622,7 @@ const AIPanel = () => {
         }
 
         const result = await invoke<any>('execute_mcp_tool_call', {
-          serverName: server.name,
+          serverName: server.key || server.name,
           toolName: toolCall.function.name,
           arguments: args,
         })

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, ReactNode, SyntheticEvent } from 'react'
+import { useState, useEffect, useRef, ReactNode } from 'react'
 import { HiChevronDown } from 'react-icons/hi2'
 
 export interface DropdownOption<T = string> {
@@ -45,7 +45,8 @@ const Dropdown = <T extends string | number = string>({
   disabled = false,
 }: DropdownProps<T>) => {
   const [isOpen, setIsOpen] = useState(false)
-  const dropdownRef = useRef<HTMLDetailsElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+  const buttonRef = useRef<HTMLDivElement>(null)
 
   // 获取选中的选项
   const selectedOption = selectedId
@@ -64,8 +65,9 @@ const Dropdown = <T extends string | number = string>({
         !dropdownRef.current.contains(event.target as Node)
       ) {
         setIsOpen(false)
-        if (dropdownRef.current) {
-          dropdownRef.current.removeAttribute('open')
+        // 移除焦点以关闭下拉菜单
+        if (buttonRef.current) {
+          buttonRef.current.blur()
         }
       }
     }
@@ -78,48 +80,73 @@ const Dropdown = <T extends string | number = string>({
     }
   }, [isOpen])
 
-  // 同步 details 元素的 open 状态
-  useEffect(() => {
-    if (dropdownRef.current) {
-      if (isOpen) {
-        dropdownRef.current.setAttribute('open', '')
-      } else {
-        dropdownRef.current.removeAttribute('open')
-      }
-    }
-  }, [isOpen])
-
   const handleSelect = (id: T) => {
     onSelect(id)
     setIsOpen(false)
-    if (dropdownRef.current) {
-      dropdownRef.current.removeAttribute('open')
+    // 移除焦点以关闭下拉菜单
+    if (buttonRef.current) {
+      buttonRef.current.blur()
     }
   }
 
-  const handleToggle = (e: SyntheticEvent<HTMLDetailsElement>) => {
+  const handleButtonClick = (e: React.MouseEvent) => {
     if (disabled) {
       e.preventDefault()
       return
     }
-    setIsOpen(e.currentTarget.open)
+    // 让按钮获得焦点，这样 DaisyUI 的 CSS 会显示下拉菜单
+    if (buttonRef.current) {
+      buttonRef.current.focus()
+    }
+    setIsOpen(true)
+  }
+
+  const handleButtonBlur = (e: React.FocusEvent) => {
+    // 如果焦点移到了下拉内容内部，不要关闭
+    if (
+      dropdownRef.current &&
+      dropdownRef.current.contains(e.relatedTarget as Node)
+    ) {
+      return
+    }
+    // 延迟关闭，以便点击事件能够正常触发
+    setTimeout(() => {
+      setIsOpen(false)
+    }, 150)
   }
 
   return (
-    <details
+    <div
       ref={dropdownRef}
       className={`dropdown dropdown-${position} ${className}`}
-      onToggle={handleToggle}
     >
-      <summary
+      <div
+        ref={buttonRef}
+        tabIndex={disabled ? -1 : 0}
+        role="button"
         className={`rounded-full ${summaryClassName} ${
           loading ? 'loading' : ''
         } ${disabled ? 'cursor-not-allowed opacity-50' : ''}`}
+        onClick={handleButtonClick}
+        onBlur={handleButtonBlur}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            if (buttonRef.current) {
+              buttonRef.current.focus()
+            }
+            setIsOpen(true)
+          } else if (e.key === 'Escape') {
+            setIsOpen(false)
+            buttonRef.current?.blur()
+          }
+        }}
       >
         {summaryContent}
         <HiChevronDown className="h-4 w-4 flex-shrink-0" />
-      </summary>
+      </div>
       <ul
+        tabIndex={-1}
         className={`menu dropdown-content bg-base-100 rounded-box z-[1] w-52 p-2 shadow-sm mb-1 max-h-60 overflow-auto ${contentClassName}`}
       >
         {options.map((option) => {
@@ -136,7 +163,7 @@ const Dropdown = <T extends string | number = string>({
           )
         })}
       </ul>
-    </details>
+    </div>
   )
 }
 

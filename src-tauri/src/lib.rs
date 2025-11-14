@@ -1,6 +1,7 @@
 mod db;
 mod mcp;
 mod ai;
+mod default_mcp;
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -222,6 +223,8 @@ pub struct MCPServerInfo {
     pub tools: Option<Vec<MCPTool>>,
     #[serde(default)]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_default: Option<bool>, // 是否为系统默认服务
 }
 
 // 运行中的任务进程管理器
@@ -1954,7 +1957,17 @@ async fn get_mcp_configs(
     .map_err(|e| e)?;
     
     let mut servers = Vec::new();
+    
+    // 首先添加默认服务（固定在第一行）
+    servers.push(default_mcp::get_default_server_info());
+    
+    // 然后添加用户配置的服务
     for (name, server_config) in config.mcp_servers {
+        // 跳过默认服务（如果用户配置中有同名服务，忽略它）
+        if name == default_mcp::DEFAULT_MCP_SERVER_NAME {
+            continue;
+        }
+        
         // 优先使用配置中的 name 字段，如果没有则使用配置键名
         let display_name = server_config.name.as_ref().unwrap_or(&name).clone();
         
@@ -1968,6 +1981,7 @@ async fn get_mcp_configs(
                     status: "connected".to_string(),
                     tools: Some(tools),
                     error: None,
+                    is_default: Some(false),
                 });
             }
             Err(e) => {
@@ -1978,6 +1992,7 @@ async fn get_mcp_configs(
                     status: "error".to_string(),
                     tools: None,
                     error: Some(e),
+                    is_default: Some(false),
                 });
             }
         }
@@ -2055,6 +2070,11 @@ async fn delete_mcp_config(
     server_name: String,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
+    // 防止删除默认服务
+    if server_name == default_mcp::DEFAULT_MCP_SERVER_NAME {
+        return Err("无法删除系统默认服务".to_string());
+    }
+    
     let app_data_dir = get_app_data_dir(&app)?;
     let config_path = mcp::get_mcp_config_path(&app_data_dir);
     
@@ -2090,6 +2110,7 @@ async fn test_mcp_connection(
             status: "connected".to_string(),
             tools: Some(tools),
             error: None,
+            is_default: Some(false),
         }),
         Err(e) => Ok(MCPServerInfo {
             name: display_name,
@@ -2098,6 +2119,7 @@ async fn test_mcp_connection(
             status: "error".to_string(),
             tools: None,
             error: Some(e),
+            is_default: Some(false),
         }),
     }
 }
@@ -2453,6 +2475,11 @@ async fn execute_mcp_tool_call(
     arguments: serde_json::Value,
     app: tauri::AppHandle,
 ) -> Result<serde_json::Value, String> {
+    // 检查是否是默认服务
+    if server_name == default_mcp::DEFAULT_MCP_SERVER_NAME {
+        return default_mcp::call_default_tool(&tool_name, arguments);
+    }
+    
     // 获取 MCP 配置
     let app_data_dir = get_app_data_dir(&app)?;
     let config_path = mcp::get_mcp_config_path(&app_data_dir);

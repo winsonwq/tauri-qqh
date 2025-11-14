@@ -1,5 +1,11 @@
 import { useState } from 'react'
-import { FaPlus, FaPaperclip, FaSearch, FaArrowUp, FaStop } from 'react-icons/fa'
+import {
+  FaPlus,
+  FaPaperclip,
+  FaSearch,
+  FaArrowUp,
+  FaStop,
+} from 'react-icons/fa'
 import RichTextEditor from './RichTextEditor'
 import { MentionOption } from './MentionPlugin'
 import AIConfigSelector from './AIConfigSelector'
@@ -29,7 +35,10 @@ const AIMessageInput = ({
   }
 
   // 可选的搜索函数（用于异步搜索）
-  const handleMentionSearch = async (query: string, _trigger: string): Promise<MentionOption[]> => {
+  const handleMentionSearch = async (
+    query: string,
+    _trigger: string,
+  ): Promise<MentionOption[]> => {
     // 这里可以实现实际的搜索逻辑，比如调用 API
     // 目前使用简单的过滤
     return defaultMentionOptions.filter(
@@ -84,7 +93,7 @@ const AIMessageInput = ({
           >
             <FaSearch className="w-4 h-4" />
           </button>
-          
+
           {/* AI 配置选择器 */}
           <AIConfigSelector
             selectedConfigId={selectedConfigId}

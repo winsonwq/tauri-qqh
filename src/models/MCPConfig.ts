@@ -82,5 +82,6 @@ export interface MCPServerInfo {
   status: 'connected' | 'disconnected' | 'error'
   tools?: MCPTool[]
   error?: string
+  is_default?: boolean // 是否为系统默认服务
 }
 
