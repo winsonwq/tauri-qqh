@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import ReactMarkdown from 'react-markdown'
@@ -14,6 +14,7 @@ import { useMessage } from '../Toast'
 import { useAppSelector } from '../../redux/hooks'
 import Tooltip from '../Tooltip'
 import { formatDateTime } from '../../utils/format'
+import { generateSystemMessage } from '../../utils/aiUtils'
 
 // 生成唯一事件 ID
 function generateEventId(): string {
@@ -256,13 +257,18 @@ const AIPanel = () => {
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map())
   const configs = useAppSelector((state) => state.aiConfig.configs)
   const mcpServers = useAppSelector((state) => state.mcp.servers)
+  const { currentResourceId, currentTaskId } = useAppSelector((state) => state.aiContext)
   const [selectedConfigId, setSelectedConfigId] = useState<string>('')
   // 不再使用全局的 pendingToolCalls，而是将其存储在消息中
   // currentStreamEventId 用于跟踪当前流式响应的事件 ID，用于清理事件监听器
   const [currentStreamEventId, setCurrentStreamEventId] = useState<string | null>(null)
   const [isStreaming, setIsStreaming] = useState(false)
   const unlistenRef = useRef<UnlistenFn | null>(null)
-  const systemMessage = '你是一个专业的文档解析和分析专家，擅长理解和分析各种类型的文档内容。'
+  
+  // 动态生成 system message，根据当前上下文状态添加提示信息
+  const systemMessage = useMemo(() => {
+    return generateSystemMessage(currentResourceId, currentTaskId)
+  }, [currentResourceId, currentTaskId])
   
   // Chat 相关状态
   const [currentChat, setCurrentChat] = useState<Chat | null>(null)
@@ -691,6 +697,8 @@ const AIPanel = () => {
           serverName: server.key || server.name,
           toolName: toolCall.function.name,
           arguments: args,
+          currentResourceId: currentResourceId || null,
+          currentTaskId: currentTaskId || null,
         })
 
         toolResults.push({

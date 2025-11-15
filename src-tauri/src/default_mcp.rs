@@ -1,5 +1,7 @@
-use crate::{MCPTool, MCPServerConfig, MCPServerInfo};
+use crate::{MCPTool, MCPServerConfig, MCPServerInfo, db};
 use serde_json::{json, Value};
+use tauri::{AppHandle, Manager};
+use std::path::PathBuf;
 
 // 默认 MCP 服务名称
 pub const DEFAULT_MCP_SERVER_NAME: &str = "__system_default__";
@@ -37,6 +39,34 @@ pub fn get_default_tools() -> Vec<MCPTool> {
                 "required": []
             }),
         },
+        MCPTool {
+            name: "get_resource_info".to_string(),
+            description: Some("获取转写资源信息。如果不提供 resource_id，将使用当前上下文中的资源ID".to_string()),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "resource_id": {
+                        "type": "string",
+                        "description": "资源ID（可选，如果不提供则使用当前上下文）"
+                    }
+                },
+                "required": []
+            }),
+        },
+        MCPTool {
+            name: "get_task_info".to_string(),
+            description: Some("获取转写任务信息。如果不提供 task_id，将使用当前上下文中的任务ID".to_string()),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "task_id": {
+                        "type": "string",
+                        "description": "任务ID（可选，如果不提供则使用当前上下文）"
+                    }
+                },
+                "required": []
+            }),
+        },
     ]
 }
 
@@ -57,13 +87,32 @@ pub fn get_default_server_info() -> MCPServerInfo {
 // 此函数可用于验证工具名是否为默认工具，目前未使用但保留以备将来扩展
 #[allow(dead_code)]
 pub fn is_default_tool(tool_name: &str) -> bool {
-    matches!(tool_name, "get_system_info")
+    matches!(tool_name, "get_system_info" | "get_resource_info" | "get_task_info")
+}
+
+// 获取应用数据目录（辅助函数）
+fn get_app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map_err(|e| format!("无法获取应用数据目录: {}", e))
 }
 
 // 调用默认工具
-pub fn call_default_tool(tool_name: &str, arguments: Value) -> Result<Value, String> {
+pub async fn call_default_tool(
+    tool_name: &str,
+    arguments: Value,
+    app: AppHandle,
+    current_resource_id: Option<String>,
+    current_task_id: Option<String>,
+) -> Result<Value, String> {
     match tool_name {
         "get_system_info" => handle_get_system_info(arguments),
+        "get_resource_info" => {
+            handle_get_resource_info(arguments, app, current_resource_id).await
+        }
+        "get_task_info" => {
+            handle_get_task_info(arguments, app, current_task_id).await
+        }
         _ => Err(format!("默认工具 {} 不存在", tool_name)),
     }
 }
@@ -139,6 +188,173 @@ fn handle_get_system_info(arguments: Value) -> Result<Value, String> {
             {
                 "type": "text",
                 "text": serde_json::to_string_pretty(&info).unwrap()
+            }
+        ]
+    }))
+}
+
+// 工具 Handler: 获取资源信息
+async fn handle_get_resource_info(
+    arguments: Value,
+    app: AppHandle,
+    current_resource_id: Option<String>,
+) -> Result<Value, String> {
+    // 解析参数：获取 resource_id，如果没有提供则使用上下文中的值
+    let resource_id = arguments
+        .get("resource_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .or(current_resource_id);
+    
+    let resource_id = resource_id.ok_or_else(|| {
+        "未提供 resource_id 参数，且当前上下文中也没有资源ID".to_string()
+    })?;
+    
+    // 获取数据库路径
+    let app_data_dir = get_app_data_dir(&app)?;
+    let db_path = db::get_db_path(&app_data_dir);
+    
+    // 在阻塞任务中查询数据库
+    let resource = tokio::task::spawn_blocking({
+        let db_path = db_path.clone();
+        let resource_id = resource_id.clone();
+        move || {
+            let conn = db::init_database(&db_path)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            db::get_resource(&conn, &resource_id)
+                .map_err(|e| format!("无法从数据库读取资源: {}", e))
+        }
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
+    
+    let resource = resource.ok_or_else(|| {
+        format!("资源 {} 不存在", resource_id)
+    })?;
+    
+    // 获取关联的任务数量
+    let task_count = tokio::task::spawn_blocking({
+        let db_path = db_path.clone();
+        let resource_id = resource_id.clone();
+        move || {
+            let conn = db::init_database(&db_path)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            db::get_tasks_by_resource(&conn, &resource_id)
+                .map(|tasks| tasks.len())
+                .map_err(|e| format!("无法查询任务: {}", e))
+        }
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
+    
+    // 构建资源信息
+    let resource_info = json!({
+        "id": resource.id,
+        "name": resource.name,
+        "file_path": resource.file_path,
+        "resource_type": match resource.resource_type {
+            crate::ResourceType::Audio => "audio",
+            crate::ResourceType::Video => "video",
+        },
+        "extracted_audio_path": resource.extracted_audio_path,
+        "status": resource.status,
+        "created_at": resource.created_at,
+        "updated_at": resource.updated_at,
+        "task_count": task_count,
+    });
+    
+    // 返回符合 MCP 规范的格式
+    Ok(json!({
+        "content": [
+            {
+                "type": "text",
+                "text": serde_json::to_string_pretty(&resource_info).unwrap()
+            }
+        ]
+    }))
+}
+
+// 工具 Handler: 获取任务信息
+async fn handle_get_task_info(
+    arguments: Value,
+    app: AppHandle,
+    current_task_id: Option<String>,
+) -> Result<Value, String> {
+    // 解析参数：获取 task_id，如果没有提供则使用上下文中的值
+    let task_id = arguments
+        .get("task_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .or(current_task_id);
+    
+    let task_id = task_id.ok_or_else(|| {
+        "未提供 task_id 参数，且当前上下文中也没有任务ID".to_string()
+    })?;
+    
+    // 获取数据库路径
+    let app_data_dir = get_app_data_dir(&app)?;
+    let db_path = db::get_db_path(&app_data_dir);
+    
+    // 在阻塞任务中查询数据库
+    let task = tokio::task::spawn_blocking({
+        let db_path = db_path.clone();
+        let task_id = task_id.clone();
+        move || {
+            let conn = db::init_database(&db_path)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            db::get_task(&conn, &task_id)
+                .map_err(|e| format!("无法从数据库读取任务: {}", e))
+        }
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
+    
+    let task = task.ok_or_else(|| {
+        format!("任务 {} 不存在", task_id)
+    })?;
+    
+    // 获取关联的资源信息
+    let resource = tokio::task::spawn_blocking({
+        let db_path = db_path.clone();
+        let resource_id = task.resource_id.clone();
+        move || {
+            let conn = db::init_database(&db_path)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            db::get_resource(&conn, &resource_id)
+                .map_err(|e| format!("无法从数据库读取资源: {}", e))
+        }
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
+    
+    // 构建任务信息
+    let mut task_info = json!({
+        "id": task.id,
+        "resource_id": task.resource_id,
+        "status": task.status,
+        "created_at": task.created_at,
+        "completed_at": task.completed_at,
+        "result": task.result,
+        "error": task.error,
+        "log": task.log,
+        "params": task.params,
+    });
+    
+    // 如果资源存在，添加资源名称
+    if let Some(resource) = resource {
+        task_info["resource_name"] = json!(resource.name);
+        task_info["resource_type"] = json!(match resource.resource_type {
+            crate::ResourceType::Audio => "audio",
+            crate::ResourceType::Video => "video",
+        });
+    }
+    
+    // 返回符合 MCP 规范的格式
+    Ok(json!({
+        "content": [
+            {
+                "type": "text",
+                "text": serde_json::to_string_pretty(&task_info).unwrap()
             }
         ]
     }))

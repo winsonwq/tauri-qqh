@@ -2475,10 +2475,19 @@ async fn execute_mcp_tool_call(
     tool_name: String,
     arguments: serde_json::Value,
     app: tauri::AppHandle,
+    current_resource_id: Option<String>,
+    current_task_id: Option<String>,
 ) -> Result<serde_json::Value, String> {
     // 检查是否是默认服务
     if server_name == default_mcp::DEFAULT_MCP_SERVER_NAME {
-        return default_mcp::call_default_tool(&tool_name, arguments);
+        return default_mcp::call_default_tool(
+            &tool_name,
+            arguments,
+            app,
+            current_resource_id,
+            current_task_id,
+        )
+        .await;
     }
     
     // 获取 MCP 配置

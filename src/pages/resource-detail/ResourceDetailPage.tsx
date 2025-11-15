@@ -5,6 +5,7 @@ import { HiArrowLeft } from 'react-icons/hi2';
 import { useAppDispatch, useAppSelector } from '../../redux/hooks';
 import { setCurrentPage } from '../../redux/slices/featureKeysSlice';
 import { setExtracting } from '../../redux/slices/videoExtractionSlice';
+import { setContext, clearContext } from '../../redux/slices/aiContextSlice';
 import { useMessage } from '../../componets/Toast';
 import {
   TranscriptionTask,
@@ -112,6 +113,19 @@ const ResourceDetailPage = () => {
       previousHasRunningTaskRef.current = false;
     }
   }, [hasRunningTask, resourceId, loadTasks]);
+
+  // 同步上下文到全局状态
+  useEffect(() => {
+    dispatch(setContext({
+      resourceId: resourceId || null,
+      taskId: selectedTaskId || null,
+    }));
+
+    // 组件卸载时清除上下文
+    return () => {
+      dispatch(clearContext());
+    };
+  }, [dispatch, resourceId, selectedTaskId]);
 
   // 清理提取事件监听器
   const cleanupExtractionListeners = useCallback(() => {

@@ -6,6 +6,7 @@ import videoExtractionReducer from './slices/videoExtractionSlice';
 import sidePanelReducer from './slices/sidePanelSlice';
 import mcpReducer from './slices/mcpSlice';
 import aiConfigReducer from './slices/aiConfigSlice';
+import aiContextReducer from './slices/aiContextSlice';
 
 export const store = configureStore({
   reducer: {
@@ -16,6 +17,7 @@ export const store = configureStore({
     sidePanel: sidePanelReducer,
     mcp: mcpReducer,
     aiConfig: aiConfigReducer,
+    aiContext: aiContextReducer,
   },
 });
 
