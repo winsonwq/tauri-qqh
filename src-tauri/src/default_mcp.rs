@@ -247,7 +247,7 @@ async fn handle_get_resource_info(
     .await
     .map_err(|e| format!("数据库操作失败: {}", e))??;
     
-    // 构建资源信息
+    // 构建资源信息（作为 component 属性）
     let resource_info = json!({
         "id": resource.id,
         "name": resource.name,
@@ -263,12 +263,13 @@ async fn handle_get_resource_info(
         "task_count": task_count,
     });
     
-    // 返回符合 MCP 规范的格式
+    // 返回 component 格式，指定组件名为 resource-info
     Ok(json!({
         "content": [
             {
-                "type": "text",
-                "text": serde_json::to_string_pretty(&resource_info).unwrap()
+                "type": "component",
+                "componentName": "resource-info",
+                "props": resource_info
             }
         ]
     }))
@@ -327,7 +328,7 @@ async fn handle_get_task_info(
     .await
     .map_err(|e| format!("数据库操作失败: {}", e))??;
     
-    // 构建任务信息
+    // 构建任务信息（作为 component 属性）
     let mut task_info = json!({
         "id": task.id,
         "resource_id": task.resource_id,
@@ -349,12 +350,13 @@ async fn handle_get_task_info(
         });
     }
     
-    // 返回符合 MCP 规范的格式
+    // 返回 component 格式，指定组件名为 task-info
     Ok(json!({
         "content": [
             {
-                "type": "text",
-                "text": serde_json::to_string_pretty(&task_info).unwrap()
+                "type": "component",
+                "componentName": "task-info",
+                "props": task_info
             }
         ]
     }))
