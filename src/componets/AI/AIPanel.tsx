@@ -1,283 +1,66 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { useStateWithRef } from '../../hooks'
+import { useChatManagement } from '../../hooks/useChatManagement'
+import { useStickyMessages } from '../../hooks/useStickyMessages'
+import { useStreamResponse } from '../../hooks/useStreamResponse'
+import { useToolCalls } from '../../hooks/useToolCalls'
 import { invoke } from '@tauri-apps/api/core'
-import { listen, UnlistenFn } from '@tauri-apps/api/event'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import { HiPlus, HiClock, HiChevronRight } from 'react-icons/hi2'
-import { FaMagic } from 'react-icons/fa'
 import AIMessageInput from './AIMessageInput'
 import { ToolCall } from './ToolCallConfirmModal'
-import ToolResultDisplay, { parseToolResultContent } from './ToolResultDisplay'
-import { markdownComponents } from './MarkdownComponents'
-import { MCPServerInfo, MCPTool, Chat, ChatListItem, Message as ChatMessage } from '../../models'
+import { MessageItem } from './MessageItem'
+import { ChatBar } from './ChatBar'
+import { EmptyState } from './EmptyState'
+import {
+  AIMessage,
+  generateEventId,
+  convertAIMessagesToChatMessages,
+} from '../../utils/aiMessageUtils'
+import { getAvailableTools } from '../../utils/toolUtils'
 import { useMessage } from '../Toast'
 import { useAppSelector } from '../../redux/hooks'
-import Tooltip from '../Tooltip'
-import { formatDateTime } from '../../utils/format'
 import { generateSystemMessage } from '../../utils/aiUtils'
-
-// 生成唯一事件 ID
-function generateEventId(): string {
-  return `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`
-}
-
-interface AIMessage {
-  id: string
-  role: 'user' | 'assistant' | 'tool'
-  content: string
-  timestamp: Date
-  tool_calls?: ToolCall[]
-  tool_call_id?: string
-  name?: string // tool name
-  reasoning?: string // thinking/reasoning 内容
-  pendingToolCalls?: ToolCall[] // 待确认的工具调用
-}
-
-// 渲染消息内容
-const renderMessageContent = (content: string, showCursor?: boolean) => {
-  return (
-    <div className="text-sm prose prose-sm max-w-none text-base-content break-words">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-        {content}
-      </ReactMarkdown>
-      {showCursor && <span className="ai-cursor" />}
-    </div>
-  )
-}
-
-// 渲染时间戳
-const renderTimestamp = (timestamp: Date) => {
-  return (
-    <div className="text-xs mt-2 text-base-content/60">
-      {formatDateTime(timestamp)}
-    </div>
-  )
-}
-
-// 获取消息容器样式
-const getMessageContainerClasses = (
-  role: 'user' | 'assistant' | 'tool',
-  isSticky: boolean,
-) => {
-  const baseClasses = ''
-  if (role === 'user') {
-    return `${baseClasses} p-2 bg-gradient-to-b from-base-100 via-base-100 to-transparent ${
-      isSticky ? `sticky z-10` : ''
-    }`
-  }
-  return `${baseClasses} bg-base-100`
-}
-
-// 获取消息内容区域样式
-const getMessageContentClasses = (role: 'user' | 'assistant' | 'tool') => {
-  const baseClasses = 'px-4 py-3'
-  return role === 'user'
-    ? `${baseClasses} bg-base-200 border rounded-lg border-base-300`
-    : `${baseClasses} bg-base-100`
-}
-
-// 消息项组件
-interface MessageItemProps {
-  message: AIMessage
-  isSticky: boolean
-  onRef: (element: HTMLDivElement | null) => void
-  onToolCallConfirm?: (toolCalls: ToolCall[]) => void
-  onToolCallCancel?: (messageId: string) => void
-  isStreaming?: boolean
-  isLastAssistantMessage?: boolean
-}
-
-const MessageItem = ({ message, isSticky, onRef, onToolCallConfirm, onToolCallCancel, isStreaming, isLastAssistantMessage }: MessageItemProps) => {
-  const [showReasoning, setShowReasoning] = useState(true)
-  const [viewingToolCall, setViewingToolCall] = useState<ToolCall | null>(null)
-  
-  // 判断是否应该显示光标：是最后一个 assistant 消息，正在流式输出，且不是 tool 消息
-  const shouldShowCursor = message.role === 'assistant' && isLastAssistantMessage && isStreaming
-  
-  return (
-    <div
-      ref={onRef}
-      data-message-id={message.id}
-      className={getMessageContainerClasses(message.role, isSticky)}
-      style={isSticky ? { top: 0 } : undefined}
-    >
-      <div className={getMessageContentClasses(message.role)}>
-        {/* 显示 reasoning/thinking 内容 */}
-        {message.reasoning && (
-          <div className="mb-3 p-3 bg-base-300 rounded-lg border-l-4 border-primary relative">
-            <div className="text-xs font-semibold text-primary mb-2">思考过程</div>
-            <div className="relative min-h-[2rem]">
-              {showReasoning ? (
-                <div className="text-sm text-base-content/80 whitespace-pre-wrap break-words pb-6">
-                  {message.reasoning}
-                </div>
-              ) : null}
-              <button
-                className="btn btn-ghost btn-xs text-left text-xs text-base-content/70 hover:text-base-content mt-2 p-0 h-auto min-h-0 p-1"
-                onClick={() => setShowReasoning(!showReasoning)}
-              >
-                {showReasoning ? '收起' : '展开'}
-              </button>
-            </div>
-          </div>
-        )}
-        
-        {/* 显示主要内容 */}
-        {message.content && (
-          message.role === 'tool' ? (
-            <div className="mt-2">
-              {message.name && (
-                <div className="text-xs font-semibold text-base-content/70 mb-2">
-                  工具: {message.name}
-                </div>
-              )}
-              <div className="bg-base-200 rounded-lg p-3 border border-base-300">
-                <ToolResultDisplay items={parseToolResultContent(message.content)} />
-              </div>
-            </div>
-          ) : (
-            renderMessageContent(message.content, shouldShowCursor)
-          )
-        )}
-        {/* 如果没有内容但正在流式输出，也显示光标 */}
-        {!message.content && shouldShowCursor && (
-          <div className="text-sm prose prose-sm max-w-none text-base-content break-words">
-            <span className="ai-cursor" />
-          </div>
-        )}
-        
-        {/* 显示待确认的工具调用 */}
-        {message.pendingToolCalls && message.pendingToolCalls.length > 0 && (
-          <div className="mt-3 p-3 bg-warning/10 rounded-lg border border-warning/20">
-            <div className="space-y-1 mb-3">
-              {message.pendingToolCalls.map((toolCall, index) => {
-                return (
-                  <button
-                    key={index}
-                    className="w-full flex items-center justify-between bg-base-100 cursor-pointer rounded p-2 hover:bg-base-200 transition-colors text-left"
-                    onClick={() => setViewingToolCall(toolCall)}
-                  >
-                    <span className="font-medium text-sm text-base-content space-x-2">
-                      <span className="text-warning">工具调用</span>
-                      <span className='text-base-content'>{toolCall.function.name}</span>
-                    </span>
-                    <HiChevronRight className="h-4 w-4 text-base-content/50 flex-shrink-0" />
-                  </button>
-                )
-              })}
-            </div>
-            <div className="flex gap-2">
-              <button
-                className="btn btn-sm btn-primary"
-                onClick={() => onToolCallConfirm?.(message.pendingToolCalls!)}
-              >
-                确认执行
-              </button>
-              <button
-                className="btn btn-sm btn-ghost"
-                onClick={() => onToolCallCancel?.(message.id)}
-              >
-                取消
-              </button>
-            </div>
-          </div>
-        )}
-        
-        {/* 显示已完成的工具调用 */}
-        {message.tool_calls && message.tool_calls.length > 0 && !message.pendingToolCalls && (
-          <div className="mt-3 p-3 bg-info/10 rounded-lg border border-info/20">
-            <div className="space-y-1">
-              {message.tool_calls.map((toolCall, index) => {
-                return (
-                  <button
-                    key={index}
-                    className="w-full flex items-center justify-between bg-base-100 cursor-pointer rounded p-2 hover:bg-base-200 transition-colors text-left"
-                    onClick={() => setViewingToolCall(toolCall)}
-                  >
-                    <span className="font-medium text-sm text-base-content space-x-2">
-                      <span className="text-info">工具调用</span>
-                      <span className='text-base-content'>{toolCall.function.name}</span>
-                    </span>
-                    <HiChevronRight className="h-4 w-4 text-base-content/50 flex-shrink-0" />
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        )}
-        
-        {/* 工具调用详情 Modal */}
-        {viewingToolCall && (
-          <div className="modal modal-open">
-            <div className="modal-box">
-              <h3 className="font-bold text-lg mb-4">工具调用详情</h3>
-              <div className="space-y-3">
-                <div>
-                  <div className="text-sm font-semibold text-base-content/70 mb-1">工具名称</div>
-                  <div className="text-sm font-medium">{viewingToolCall.function.name}</div>
-                </div>
-                <div>
-                  <div className="text-sm font-semibold text-base-content/70 mb-1">参数</div>
-                  <div className="bg-base-200 rounded-lg p-3">
-                    <pre className="text-xs text-base-content/80 whitespace-pre-wrap break-words">
-                      {(() => {
-                        try {
-                          const args = JSON.parse(viewingToolCall.function.arguments)
-                          return JSON.stringify(args, null, 2)
-                        } catch {
-                          return viewingToolCall.function.arguments
-                        }
-                      })()}
-                    </pre>
-                  </div>
-                </div>
-              </div>
-              <div className="modal-action">
-                <button className="btn" onClick={() => setViewingToolCall(null)}>
-                  关闭
-                </button>
-              </div>
-            </div>
-            <div className="modal-backdrop" onClick={() => setViewingToolCall(null)}></div>
-          </div>
-        )}
-        
-        {renderTimestamp(message.timestamp)}
-      </div>
-    </div>
-  )
-}
 
 const AIPanel = () => {
   const message = useMessage()
   const [messages, updateMessages, messagesRef] = useStateWithRef<AIMessage[]>([])
-  const [stickyMessageId, setStickyMessageId] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const scrollContainerRef = useRef<HTMLDivElement>(null)
-  const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map())
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null)
+  const chatBarRef = useRef<HTMLDivElement | null>(null)
+  const [chatBarHeight, setChatBarHeight] = useState(0)
+
   const configs = useAppSelector((state) => state.aiConfig.configs)
   const mcpServers = useAppSelector((state) => state.mcp.servers)
   const { currentResourceId, currentTaskId } = useAppSelector((state) => state.aiContext)
   const [selectedConfigId, setSelectedConfigId] = useState<string>('')
-  // 不再使用全局的 pendingToolCalls，而是将其存储在消息中
-  // currentStreamEventId 用于跟踪当前流式响应的事件 ID，用于清理事件监听器
-  const [currentStreamEventId, setCurrentStreamEventId] = useState<string | null>(null)
-  const [isStreaming, setIsStreaming] = useState(false)
-  const unlistenRef = useRef<UnlistenFn | null>(null)
-  
+
   // 动态生成 system message，根据当前上下文状态添加提示信息
   const systemMessage = useMemo(() => {
     return generateSystemMessage(currentResourceId, currentTaskId)
   }, [currentResourceId, currentTaskId])
-  
-  // Chat 相关状态
-  const [currentChat, setCurrentChat] = useState<Chat | null>(null)
-  const [chatList, setChatList] = useState<ChatListItem[]>([])
-  const [showHistoryDropdown, setShowHistoryDropdown] = useState(false)
-  const historyDropdownRef = useRef<HTMLDivElement>(null)
-  const chatBarRef = useRef<HTMLDivElement>(null)
-  const [chatBarHeight, setChatBarHeight] = useState(0)
+
+  // Chat 管理
+  const {
+    currentChat,
+    setCurrentChat,
+    chatList,
+    showHistoryDropdown,
+    setShowHistoryDropdown,
+    historyDropdownRef,
+    loadChatList,
+    handleCreateChat,
+    handleSwitchChat,
+    initialMessages,
+  } = useChatManagement()
+
+  // 初始化消息：只在首次加载时使用 initialMessages
+  const isInitializedRef = useRef(false)
+  useEffect(() => {
+    if (!isInitializedRef.current && initialMessages.length > 0) {
+      updateMessages(initialMessages)
+      isInitializedRef.current = true
+    }
+  }, [initialMessages, updateMessages])
+
 
   // 自动滚动到底部
   useEffect(() => {
@@ -292,87 +75,53 @@ const AIPanel = () => {
         console.log('[AIPanel] Chat Bar Height updated:', chatBarRef.current.offsetHeight)
       }
     }
-    
+
     updateChatBarHeight()
     window.addEventListener('resize', updateChatBarHeight)
-    
+
     return () => {
       window.removeEventListener('resize', updateChatBarHeight)
     }
   }, [])
 
-  // 检测 sticky 状态：只保留最后一个进入 sticky 状态的 user 消息
-  useEffect(() => {
-    const userMessages = messages.filter((m) => m.role === 'user')
-    if (userMessages.length === 0) {
-      setStickyMessageId(null)
-      console.log('[AIPanel] Sticky Message ID: null (no user messages)')
-      return
-    }
-
-    // 检测哪些消息在视口顶部
-    const checkStickyMessages = () => {
-      const stickyIds: string[] = []
-      const scrollContainer = scrollContainerRef.current
-      if (!scrollContainer) return
-
-      // 获取滚动容器的位置
-      const containerRect = scrollContainer.getBoundingClientRect()
-      const containerTop = containerRect.top
-
-      messageRefs.current.forEach((element, messageId) => {
-        const message = messages.find((m) => m.id === messageId)
-        if (message && message.role === 'user') {
-          const rect = element.getBoundingClientRect()
-          // 如果消息的顶部在滚动容器顶部或上方，且底部在滚动容器内，则认为它应该 sticky
-          if (rect.top <= containerTop && rect.bottom > containerTop) {
-            stickyIds.push(messageId)
-          }
-        }
-      })
-
-      // 只保留最后一个 sticky 的消息（按消息顺序）
-      if (stickyIds.length > 0) {
-        const sortedStickyIds = stickyIds.sort((a, b) => {
-          const indexA = messages.findIndex((m) => m.id === a)
-          const indexB = messages.findIndex((m) => m.id === b)
-          return indexA - indexB
-        })
-        const newStickyId = sortedStickyIds[sortedStickyIds.length - 1]
-        if (newStickyId !== stickyMessageId) {
-          setStickyMessageId(newStickyId)
-          console.log('[AIPanel] Sticky Message ID updated to:', newStickyId)
-        }
-      } else if (stickyMessageId !== null) {
-        setStickyMessageId(null)
-        console.log('[AIPanel] Sticky Message ID updated to: null (no sticky messages)')
-      }
-    }
-
-    // 使用 scroll 事件来检测
-    const scrollContainer = scrollContainerRef.current
-    if (scrollContainer) {
-      scrollContainer.addEventListener('scroll', checkStickyMessages)
-      // 初始检查
-      setTimeout(checkStickyMessages, 0)
-
-      return () => {
-        scrollContainer.removeEventListener('scroll', checkStickyMessages)
-      }
-    }
-  }, [messages, chatBarHeight])
-
-  // 注册消息元素的 ref
-  const setMessageRef = useCallback(
-    (messageId: string, element: HTMLDivElement | null) => {
-      if (element) {
-        messageRefs.current.set(messageId, element)
-      } else {
-        messageRefs.current.delete(messageId)
-      }
-    },
-    [],
+  // Sticky 消息检测
+  const { stickyMessageId, setMessageRef } = useStickyMessages(
+    messages,
+    scrollContainerRef,
+    chatBarHeight,
   )
+
+  // 流式响应处理
+  const {
+    isStreaming,
+    setIsStreaming,
+    currentStreamEventId,
+    setCurrentStreamEventId,
+    startStreamResponse,
+  } = useStreamResponse()
+
+  // 工具调用处理
+  const { executeToolCallsAndContinue } = useToolCalls({
+    selectedConfigId,
+    currentChatId: currentChat?.id,
+    currentResourceId,
+    currentTaskId,
+    systemMessage,
+    messagesRef,
+    updateMessages,
+    mcpServers,
+    onStreamStart: async (eventId: string, chatId: string) => {
+      await startStreamResponse(
+        eventId,
+        chatId,
+        updateMessages,
+        executeToolCallsAndContinue,
+        mcpServers,
+      )
+    },
+    setCurrentStreamEventId,
+    setIsStreaming,
+  })
 
   // 从 Redux store 中获取 AI 配置，并设置默认选中的配置
   useEffect(() => {
@@ -381,559 +130,141 @@ const AIPanel = () => {
     }
   }, [configs, selectedConfigId])
 
-  // 加载 chat 列表
-  const loadChatList = async () => {
-    try {
-      const chats = await invoke<ChatListItem[]>('get_all_chats')
-      setChatList(chats)
-    } catch (err) {
-      console.error('加载 chat 列表失败:', err)
-    }
-  }
-
-  // 创建新 chat
-  const handleCreateChat = async () => {
-    try {
-      const newChat = await invoke<Chat>('create_chat', { title: '' })
-      setCurrentChat(newChat)
-      updateMessages([])
-      await loadChatList()
-    } catch (err) {
-      console.error('创建 chat 失败:', err)
-      message.error('创建对话失败')
-    }
-  }
-
-  // 切换 chat
-  const handleSwitchChat = async (chatId: string) => {
-    try {
-      const chat = await invoke<Chat | null>('get_chat', { chatId })
-      if (!chat) {
-        message.error('Chat 不存在')
+  // 处理发送消息
+  const handleSend = useCallback(
+    async (messageText: string, configId?: string) => {
+      const effectiveConfigId = configId || selectedConfigId
+      if (!effectiveConfigId) {
+        message.error('请先选择 AI 配置')
         return
       }
-      
-      setCurrentChat(chat)
-      
-      // 加载消息
-      const dbMessages = await invoke<ChatMessage[]>('get_messages_by_chat', { chatId })
-      
-      // 转换消息格式
-      const convertedMessages: AIMessage[] = dbMessages.map((msg) => {
-        let tool_calls: ToolCall[] | undefined
-        if (msg.tool_calls) {
-          try {
-            tool_calls = JSON.parse(msg.tool_calls) as ToolCall[]
-          } catch {
-            tool_calls = undefined
-          }
-        }
-        
-        return {
-          id: msg.id,
-          role: msg.role,
-          content: msg.content,
-          timestamp: new Date(msg.created_at),
-          tool_calls,
-          tool_call_id: msg.tool_call_id || undefined,
-          name: msg.name || undefined,
-          reasoning: msg.reasoning || undefined,
-        }
-      })
-      
-      updateMessages(convertedMessages)
-      setShowHistoryDropdown(false)
-    } catch (err) {
-      console.error('切换 chat 失败:', err)
-      message.error('切换对话失败')
-    }
-  }
 
-  // 初始化：加载最后一个 chat，如果没有则创建新 chat
-  useEffect(() => {
-    const initChat = async () => {
-      if (!currentChat) {
-        // 先加载 chat 列表
+      // 确保有当前 chat
+      let chatId = currentChat?.id
+      if (!chatId) {
         try {
-          const chats = await invoke<ChatListItem[]>('get_all_chats')
-          setChatList(chats)
-          
-          // 如果有 chat，加载最新的（第一个）
-          if (chats.length > 0) {
-            const chatId = chats[0].id
-            try {
-              const chat = await invoke<Chat | null>('get_chat', { chatId })
-              if (chat) {
-                setCurrentChat(chat)
-                
-                // 加载消息
-                const dbMessages = await invoke<ChatMessage[]>('get_messages_by_chat', { chatId })
-                
-                // 转换消息格式
-                const convertedMessages: AIMessage[] = dbMessages.map((msg) => {
-                  let tool_calls: ToolCall[] | undefined
-                  if (msg.tool_calls) {
-                    try {
-                      tool_calls = JSON.parse(msg.tool_calls) as ToolCall[]
-                    } catch {
-                      tool_calls = undefined
-                    }
-                  }
-                  
-                  return {
-                    id: msg.id,
-                    role: msg.role,
-                    content: msg.content,
-                    timestamp: new Date(msg.created_at),
-                    tool_calls,
-                    tool_call_id: msg.tool_call_id || undefined,
-                    name: msg.name || undefined,
-                  }
-                })
-                
-                updateMessages(convertedMessages)
-              }
-            } catch (err) {
-              console.error('加载 chat 失败:', err)
-              // 如果加载失败，创建新 chat
-              try {
-                const newChat = await invoke<Chat>('create_chat', { title: '' })
-                setCurrentChat(newChat)
-                updateMessages([])
-                const updatedChats = await invoke<ChatListItem[]>('get_all_chats')
-                setChatList(updatedChats)
-              } catch (createErr) {
-                console.error('创建 chat 失败:', createErr)
-                message.error('创建对话失败')
-              }
-            }
-          } else {
-            // 如果没有 chat，创建新 chat
-            try {
-              const newChat = await invoke<Chat>('create_chat', { title: '' })
-              setCurrentChat(newChat)
-              updateMessages([])
-            } catch (err) {
-              console.error('创建 chat 失败:', err)
-              message.error('创建对话失败')
-            }
-          }
+          const newChat = await handleCreateChat()
+          chatId = newChat?.id
         } catch (err) {
-          console.error('初始化 chat 失败:', err)
-          // 如果加载失败，尝试创建新 chat
-          try {
-            const newChat = await invoke<Chat>('create_chat', { title: '' })
-            setCurrentChat(newChat)
-            updateMessages([])
-          } catch (createErr) {
-            console.error('创建 chat 失败:', createErr)
-            message.error('创建对话失败')
-          }
+          return
         }
       }
-    }
-    initChat()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
-  // 点击外部关闭 dropdown
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (historyDropdownRef.current && !historyDropdownRef.current.contains(event.target as Node)) {
-        setShowHistoryDropdown(false)
-      }
-    }
-    
-    if (showHistoryDropdown) {
-      document.addEventListener('mousedown', handleClickOutside)
-      return () => {
-        document.removeEventListener('mousedown', handleClickOutside)
-      }
-    }
-  }, [showHistoryDropdown])
-
-  // 清理事件监听
-  useEffect(() => {
-    return () => {
-      if (unlistenRef.current) {
-        unlistenRef.current()
-        unlistenRef.current = null
-      }
-    }
-  }, [])
-
-  // 获取可用的 MCP 工具（只返回 enabled 为 true 的服务器工具）
-  const getAvailableTools = (): MCPTool[] => {
-    const tools: MCPTool[] = []
-    mcpServers.forEach((server) => {
-      // 只包含 enabled 为 true 且已连接的服务器
-      const isEnabled = server.config.enabled ?? true
-      if (isEnabled && server.status === 'connected' && server.tools) {
-        tools.push(...server.tools)
-      }
-    })
-    return tools
-  }
-
-  // 查找工具对应的服务器
-  const findToolServer = (toolName: string): MCPServerInfo | null => {
-    return mcpServers.find((server) =>
-      server.tools?.some((tool) => tool.name === toolName)
-    ) || null
-  }
-
-  // 检查工具是否属于默认 MCP
-  const isDefaultMCPTool = (toolName: string): boolean => {
-    const server = findToolServer(toolName)
-    return server?.is_default === true
-  }
-
-  // 检查所有工具调用是否都属于默认 MCP
-  const areAllDefaultMCPTools = (toolCalls: ToolCall[]): boolean => {
-    return toolCalls.every((toolCall) => isDefaultMCPTool(toolCall.function.name))
-  }
-
-  // 处理流式响应
-  const handleStreamResponse = async (eventId: string, chatId: string) => {
-    // 创建助手消息
-    const assistantMessageId = Date.now().toString()
-    const assistantMessage: AIMessage = {
-      id: assistantMessageId,
-      role: 'assistant',
-      content: '',
-      timestamp: new Date(),
-    }
-    updateMessages((prev) => [...prev, assistantMessage])
-    
-    let finalContent = ''
-    let finalReasoning = ''
-    let finalToolCalls: ToolCall[] | undefined = undefined
-
-    // 监听流式事件
-    const eventName = `ai-chat-stream-${eventId}`
-    console.log('[AI Frontend] 开始监听事件:', eventName)
-    
-    const unlisten = await listen<{
-      type: string
-      content?: string
-      tool_calls?: ToolCall[]
-      event_id: string
-    }>(eventName, (event) => {
-      console.log('[AI Frontend] 收到事件类型:', event.payload.type)
-      console.log('[AI Frontend] 收到事件:', event.payload)
-      const payload = event.payload
-      if (payload.type === 'content' && payload.content) {
-        finalContent += payload.content
-        updateMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === assistantMessageId
-              ? { ...msg, content: msg.content + payload.content }
-              : msg
-          )
-        )
-      } else if (payload.type === 'tool_calls' && payload.tool_calls) {
-        finalToolCalls = payload.tool_calls
-        
-        // 检查是否所有工具都属于默认 MCP
-        const allDefault = areAllDefaultMCPTools(payload.tool_calls)
-        
-        if (allDefault) {
-          // 默认 MCP 工具直接执行，不显示确认界面
-          updateMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === assistantMessageId
-                ? { ...msg, tool_calls: payload.tool_calls }
-                : msg
-            )
-          )
-          // 直接执行工具调用
-          executeToolCallsAndContinue(payload.tool_calls).catch((err) => {
-            console.error('执行默认 MCP 工具调用失败:', err)
-            message.error(`工具调用失败: ${err}`)
-          })
-        } else {
-          // 非默认 MCP 工具需要用户确认
-          updateMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === assistantMessageId
-                ? { ...msg, tool_calls: payload.tool_calls, pendingToolCalls: payload.tool_calls }
-                : msg
-            )
-          )
-        }
-      } else if (payload.type === 'reasoning' && payload.content) {
-        // 处理 reasoning/thinking 内容
-        finalReasoning += payload.content
-        updateMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === assistantMessageId
-              ? { ...msg, reasoning: (msg.reasoning || '') + payload.content }
-              : msg
-          )
-        )
-      } else if (payload.type === 'done' || payload.type === 'stopped') {
-        if (unlistenRef.current) {
-          unlistenRef.current()
-          unlistenRef.current = null
-        }
-        setCurrentStreamEventId(null)
-        setIsStreaming(false)
-        
-        // 保存助手消息到数据库（即使被停止，也要保存已接收的内容）
-        if (finalContent || finalToolCalls || finalReasoning) {
-          invoke('save_message', {
-            chatId,
-            role: 'assistant',
-            content: finalContent,
-            toolCalls: finalToolCalls ? JSON.stringify(finalToolCalls) : null,
-            toolCallId: null,
-            name: null,
-            reasoning: finalReasoning || null,
-          }).catch((err) => {
-            console.error('保存助手消息失败:', err)
-          })
-        }
-      }
-    })
-    unlistenRef.current = unlisten
-  }
-
-  // 执行工具调用并继续对话
-  const executeToolCallsAndContinue = async (toolCalls: ToolCall[]) => {
-    if (!selectedConfigId) {
-      message.error('请先选择 AI 配置')
-      return
-    }
-
-    const chatId = currentChat?.id
-    if (!chatId) {
-      message.error('当前没有活动的对话')
-      return
-    }
-
-    // 执行所有工具调用
-    const toolResults: AIMessage[] = []
-    for (const toolCall of toolCalls) {
-      const server = findToolServer(toolCall.function.name)
-      if (!server) {
-        message.error(`找不到工具 ${toolCall.function.name} 对应的服务器`)
-        continue
-      }
-
-      try {
-        let args: any = {}
-        try {
-          args = JSON.parse(toolCall.function.arguments)
-        } catch {
-          args = {}
-        }
-
-        const result = await invoke<any>('execute_mcp_tool_call', {
-          serverName: server.key || server.name,
-          toolName: toolCall.function.name,
-          arguments: args,
-          currentResourceId: currentResourceId || null,
-          currentTaskId: currentTaskId || null,
-        })
-
-        toolResults.push({
-          id: Date.now().toString() + Math.random(),
-          role: 'tool',
-          content: JSON.stringify(result),
-          timestamp: new Date(),
-          tool_call_id: toolCall.id,
-          name: toolCall.function.name,
-        })
-      } catch (err) {
-        console.error('工具调用失败:', err)
-        message.error(`工具调用失败: ${err}`)
-      }
-    }
-
-    // 更新消息列表
-    // 使用 ref 获取最新的消息状态，避免异步状态更新的时序问题
-    const currentMessages = messagesRef.current
-    const updatedMessages = [...currentMessages, ...toolResults]
-    console.log('[executeToolCallsAndContinue] 当前消息数量:', currentMessages.length, '工具结果数量:', toolResults.length, '更新后消息数量:', updatedMessages.length)
-    
-    // 更新状态
-    updateMessages(updatedMessages)
-    
-    // 保存工具结果消息到数据库
-    for (const toolResult of toolResults) {
-      invoke('save_message', {
-        chatId,
-        role: 'tool',
-        content: toolResult.content,
-        toolCalls: null,
-        toolCallId: toolResult.tool_call_id || null,
-        name: toolResult.name || null,
-        reasoning: null,
-      }).catch((err) => {
-        console.error('保存工具结果消息失败:', err)
-      })
-    }
-
-    // 继续对话（使用更新后的消息列表）
-    const chatMessages = updatedMessages
-      .filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'tool')
-      .map((m) => ({
-        role: m.role,
-        content: m.content,
-        tool_calls: m.tool_calls,
-        tool_call_id: m.tool_call_id,
-        name: m.name,
-      }))
-
-    // 异步调用 API（只调用一次）
-    const tools = getAvailableTools()
-    try {
-      // 在前端生成 eventId，这样可以先设置监听器，避免丢失第一个事件
-      const eventId = generateEventId()
-      console.log('[AI Frontend] 生成 eventId (工具调用继续):', eventId)
-
-      setCurrentStreamEventId(eventId)
-      setIsStreaming(true)
-      
-      // 先设置监听器，然后再调用后端
-      handleStreamResponse(eventId, chatId)
-      
-      // 调用流式 API（传递 eventId）
-      await invoke<string>('chat_completion', {
-        configId: selectedConfigId,
-        messages: chatMessages,
-        tools: tools.length > 0 ? tools : null,
-        systemMessage: systemMessage,
-        eventId: eventId,
-      })
-    } catch (err) {
-      console.error('AI 对话失败:', err)
-      message.error(`AI 对话失败: ${err}`)
-      setIsStreaming(false)
-      setCurrentStreamEventId(null)
-    }
-  }
-
-  const handleSend = async (messageText: string, configId?: string) => {
-    const effectiveConfigId = configId || selectedConfigId
-    if (!effectiveConfigId) {
-      message.error('请先选择 AI 配置')
-      return
-    }
-
-    // 确保有当前 chat
-    let chatId = currentChat?.id
-    if (!chatId) {
-      try {
-        const newChat = await invoke<Chat>('create_chat', { title: '' })
-        setCurrentChat(newChat)
-        chatId = newChat.id
-        await loadChatList()
-      } catch (err) {
-        console.error('创建 chat 失败:', err)
-        message.error('创建对话失败')
-        return
-      }
-    }
-
-    // 添加用户消息
-    const userMessageId = Date.now().toString()
-    const userMessage: AIMessage = {
-      id: userMessageId,
-      role: 'user',
-      content: messageText,
-      timestamp: new Date(),
-    }
-    updateMessages((prev) => [...prev, userMessage])
-
-    // 保存用户消息到数据库
-    try {
-      await invoke('save_message', {
-        chatId,
+      // 添加用户消息
+      const userMessageId = Date.now().toString()
+      const userMessage: AIMessage = {
+        id: userMessageId,
         role: 'user',
         content: messageText,
-        toolCalls: null,
-        toolCallId: null,
-        name: null,
-        reasoning: null,
-      })
-    } catch (err) {
-      console.error('保存用户消息失败:', err)
-    }
+        timestamp: new Date(),
+      }
+      updateMessages((prev) => [...prev, userMessage])
 
-    try {
-      // 构建消息历史（包含新添加的用户消息）
-      const allMessages = [...messages, userMessage]
-      const chatMessages = allMessages
-        .filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'tool')
-        .map((m) => ({
-          role: m.role,
-          content: m.content,
-          tool_calls: m.tool_calls,
-          tool_call_id: m.tool_call_id,
-          name: m.name,
-        }))
+      // 保存用户消息到数据库
+      try {
+        await invoke('save_message', {
+          chatId,
+          role: 'user',
+          content: messageText,
+          toolCalls: null,
+          toolCallId: null,
+          name: null,
+          reasoning: null,
+        })
+      } catch (err) {
+        console.error('保存用户消息失败:', err)
+      }
 
-      // 获取可用工具
-      const tools = getAvailableTools()
+      try {
+        // 构建消息历史（包含新添加的用户消息）
+        const allMessages = [...messages, userMessage]
+        const chatMessages = convertAIMessagesToChatMessages(allMessages)
 
-      // 在前端生成 eventId，这样可以先设置监听器，避免丢失第一个事件
-      const eventId = generateEventId()
-      console.log('[AI Frontend] 生成 eventId:', eventId)
+        // 获取可用工具
+        const tools = getAvailableTools(mcpServers)
 
-      setCurrentStreamEventId(eventId)
-      setIsStreaming(true)
-      
-      // 先设置监听器，然后再调用后端
-      await handleStreamResponse(eventId, chatId!)
-      
-      // 调用流式 API（传递 eventId）
-      console.log('[AI Frontend] 调用 chat_completion，configId:', effectiveConfigId)
-      await invoke<string>('chat_completion', {
-        configId: effectiveConfigId,
-        messages: chatMessages,
-        tools: tools.length > 0 ? tools : null,
-        systemMessage: systemMessage,
-        eventId: eventId,
-      })
-    } catch (err) {
-      console.error('AI 对话失败:', err)
-      message.error(`AI 对话失败: ${err}`)
-      setIsStreaming(false)
-      setCurrentStreamEventId(null)
-    }
-  }
+        // 在前端生成 eventId，这样可以先设置监听器，避免丢失第一个事件
+        const eventId = generateEventId()
+        console.log('[AI Frontend] 生成 eventId:', eventId)
+
+        setCurrentStreamEventId(eventId)
+        setIsStreaming(true)
+
+        // 先设置监听器，然后再调用后端
+        await startStreamResponse(
+          eventId,
+          chatId!,
+          updateMessages,
+          executeToolCallsAndContinue,
+          mcpServers,
+        )
+
+        // 调用流式 API（传递 eventId）
+        console.log('[AI Frontend] 调用 chat_completion，configId:', effectiveConfigId)
+        await invoke<string>('chat_completion', {
+          configId: effectiveConfigId,
+          messages: chatMessages,
+          tools: tools.length > 0 ? tools : null,
+          systemMessage: systemMessage,
+          eventId: eventId,
+        })
+      } catch (err) {
+        console.error('AI 对话失败:', err)
+        message.error(`AI 对话失败: ${err}`)
+        setIsStreaming(false)
+        setCurrentStreamEventId(null)
+      }
+    },
+    [
+      selectedConfigId,
+      currentChat,
+      handleCreateChat,
+      updateMessages,
+      messages,
+      mcpServers,
+      systemMessage,
+      setCurrentStreamEventId,
+      setIsStreaming,
+      startStreamResponse,
+      executeToolCallsAndContinue,
+      message,
+    ],
+  )
 
   // 处理工具调用确认
-  const handleToolCallConfirm = async (toolCalls: ToolCall[]) => {
-    // 找到包含这些 toolCalls 的消息并清除 pendingToolCalls
-    updateMessages((prev) =>
-      prev.map((msg) => {
-        // 使用 JSON 字符串比较来匹配 toolCalls
-        const msgToolCallsStr = JSON.stringify(msg.pendingToolCalls || [])
-        const toolCallsStr = JSON.stringify(toolCalls)
-        if (msgToolCallsStr === toolCallsStr) {
-          return { ...msg, pendingToolCalls: undefined }
-        }
-        return msg
-      })
-    )
-    await executeToolCallsAndContinue(toolCalls)
-  }
-
-  const handleToolCallCancel = (messageId: string) => {
-    updateMessages((prev) =>
-      prev.map((msg) =>
-        msg.id === messageId
-          ? { ...msg, pendingToolCalls: undefined }
-          : msg
+  const handleToolCallConfirm = useCallback(
+    async (toolCalls: ToolCall[]) => {
+      // 找到包含这些 toolCalls 的消息并清除 pendingToolCalls
+      updateMessages((prev) =>
+        prev.map((msg) => {
+          // 使用 JSON 字符串比较来匹配 toolCalls
+          const msgToolCallsStr = JSON.stringify(msg.pendingToolCalls || [])
+          const toolCallsStr = JSON.stringify(toolCalls)
+          if (msgToolCallsStr === toolCallsStr) {
+            return { ...msg, pendingToolCalls: undefined }
+          }
+          return msg
+        })
       )
-    )
-    message.info('已取消工具调用')
-  }
+      await executeToolCallsAndContinue(toolCalls)
+    },
+    [updateMessages, executeToolCallsAndContinue],
+  )
+
+  const handleToolCallCancel = useCallback(
+    (messageId: string) => {
+      updateMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === messageId ? { ...msg, pendingToolCalls: undefined } : msg
+        )
+      )
+      message.info('已取消工具调用')
+    },
+    [updateMessages, message],
+  )
 
   // 处理停止请求
-  const handleStop = async () => {
+  const handleStop = useCallback(async () => {
     if (currentStreamEventId) {
       try {
         await invoke('stop_chat_completion', { eventId: currentStreamEventId })
@@ -943,33 +274,10 @@ const AIPanel = () => {
         message.error('停止请求失败')
       }
     }
-  }
-
-  // 格式化时间
-  const formatTime = (timeStr: string | null) => {
-    if (!timeStr) return ''
-    try {
-      const date = new Date(timeStr)
-      const now = new Date()
-      const diff = now.getTime() - date.getTime()
-      const days = Math.floor(diff / (1000 * 60 * 60 * 24))
-      
-      if (days === 0) {
-        return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-      } else if (days === 1) {
-        return '昨天'
-      } else if (days < 7) {
-        return `${days} 天前`
-      } else {
-        return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
-      }
-    } catch {
-      return ''
-    }
-  }
+  }, [currentStreamEventId, message])
 
   // 使用 AI 总结 chat 标题
-  const handleSummarizeTitle = async () => {
+  const handleSummarizeTitle = useCallback(async () => {
     if (!currentChat) {
       message.error('当前没有活动的对话')
       return
@@ -1009,97 +317,62 @@ const AIPanel = () => {
       console.error('生成标题失败:', err)
       message.error(`生成标题失败: ${err}`)
     }
-  }
+  }, [currentChat, messages.length, selectedConfigId, configs, setCurrentChat, loadChatList, message])
+
+  // 处理创建新 chat
+  const onCreateChat = useCallback(async () => {
+    try {
+      await handleCreateChat()
+      updateMessages([])
+    } catch (err) {
+      // 错误已在 handleCreateChat 中处理
+    }
+  }, [handleCreateChat, updateMessages])
+
+  // 处理切换 chat
+  const onSwitchChat = useCallback(
+    async (chatId: string) => {
+      const convertedMessages = await handleSwitchChat(chatId)
+      updateMessages(convertedMessages)
+    },
+    [handleSwitchChat, updateMessages],
+  )
+
+  // 找到最后一个 assistant 消息
+  const lastAssistantIndex = useMemo(() => {
+    return (
+      messages
+        .map((m, i) => ({ role: m.role, index: i }))
+        .filter((m) => m.role === 'assistant')
+        .pop()?.index ?? -1
+    )
+  }, [messages])
 
   return (
     <div className="flex flex-col h-full bg-base-100">
       {/* Chat Bar */}
-      <div ref={chatBarRef} className="flex-shrink-0 flex items-center justify-between px-4 py-2 border-b border-base-300 bg-base-200">
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium truncate">
-            {currentChat?.title || '新对话'}
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {currentChat && messages.length > 0 && (
-            <Tooltip content="使用 AI 生成标题" position="bottom">
-              <button
-                className="btn btn-xs btn-ghost btn-square"
-                onClick={handleSummarizeTitle}
-              >
-                <FaMagic className="h-4 w-4" />
-              </button>
-            </Tooltip>
-          )}
-          <Tooltip content="新建对话" position="bottom">
-            <button
-              className="btn btn-xs btn-ghost btn-square"
-              onClick={handleCreateChat}
-            >
-              <HiPlus className="h-4 w-4" />
-            </button>
-          </Tooltip>
-          <div className="relative" ref={historyDropdownRef}>
-            <Tooltip content="历史记录" position="bottom">
-              <button
-                className="btn btn-xs btn-ghost btn-square"
-                onClick={() => setShowHistoryDropdown(!showHistoryDropdown)}
-              >
-                <HiClock className="h-4 w-4" />
-              </button>
-            </Tooltip>
-            {showHistoryDropdown && (
-              <ul className="absolute right-0 top-full mt-1 bg-base-100 rounded-box z-[100] w-64 p-2 shadow-lg border border-base-300 max-h-96 overflow-y-auto">
-                {chatList.length === 0 ? (
-                  <li className="px-4 py-2 text-sm text-base-content/50">暂无历史记录</li>
-                ) : (
-                  chatList.map((chat) => (
-                    <li key={chat.id}>
-                      <button
-                        className={`w-full text-left px-4 py-2 rounded hover:bg-base-200 transition-colors ${
-                          currentChat?.id === chat.id ? 'bg-base-200' : ''
-                        }`}
-                        onClick={() => handleSwitchChat(chat.id)}
-                      >
-                        <div className="flex-1 min-w-0">
-                          <div className="font-medium truncate">{chat.title}</div>
-                          {chat.last_message_at && (
-                            <div className="text-xs text-base-content/60">
-                              {formatTime(chat.last_message_at)}
-                            </div>
-                          )}
-                        </div>
-                      </button>
-                    </li>
-                  ))
-                )}
-              </ul>
-            )}
-          </div>
-        </div>
+      <div ref={chatBarRef}>
+        <ChatBar
+          currentChat={currentChat}
+          chatList={chatList}
+          showHistoryDropdown={showHistoryDropdown}
+          historyDropdownRef={historyDropdownRef}
+          messagesCount={messages.length}
+          onToggleHistory={() => setShowHistoryDropdown(!showHistoryDropdown)}
+          onCreateChat={onCreateChat}
+          onSwitchChat={onSwitchChat}
+          onSummarizeTitle={handleSummarizeTitle}
+        />
       </div>
 
       {/* 消息列表区域 */}
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
         {messages.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-base-content/60 p-4">
-            <div className="text-center">
-              <p className="text-lg mb-2">开始对话</p>
-              <p className="text-sm">输入消息开始与 AI 对话</p>
-            </div>
-          </div>
+          <EmptyState />
         ) : (
           <div className="space-y-0">
             {messages.map((message, index) => {
-              const isSticky =
-                message.role === 'user' && stickyMessageId === message.id
-              
-              // 找到最后一个 assistant 消息
-              const lastAssistantIndex = messages
-                .map((m, i) => ({ role: m.role, index: i }))
-                .filter((m) => m.role === 'assistant')
-                .pop()?.index ?? -1
-              
+              const isSticky = message.role === 'user' && stickyMessageId === message.id
               const isLastAssistantMessage = index === lastAssistantIndex
 
               return (
@@ -1122,13 +395,8 @@ const AIPanel = () => {
 
       {/* 输入框区域 - 固定在底部 */}
       <div className="flex-shrink-0 p-3">
-        <AIMessageInput 
-          onSend={handleSend} 
-          isStreaming={isStreaming}
-          onStop={handleStop}
-        />
+        <AIMessageInput onSend={handleSend} isStreaming={isStreaming} onStop={handleStop} />
       </div>
-
     </div>
   )
 }
