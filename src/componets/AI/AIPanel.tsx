@@ -561,11 +561,13 @@ const AIPanel = () => {
     }
   }, [])
 
-  // 获取可用的 MCP 工具
+  // 获取可用的 MCP 工具（只返回 enabled 为 true 的服务器工具）
   const getAvailableTools = (): MCPTool[] => {
     const tools: MCPTool[] = []
     mcpServers.forEach((server) => {
-      if (server.status === 'connected' && server.tools) {
+      // 只包含 enabled 为 true 且已连接的服务器
+      const isEnabled = server.config.enabled ?? true
+      if (isEnabled && server.status === 'connected' && server.tools) {
         tools.push(...server.tools)
       }
     })

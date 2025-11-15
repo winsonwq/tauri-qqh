@@ -55,7 +55,7 @@ pub fn get_default_tools() -> Vec<MCPTool> {
         },
         MCPTool {
             name: "get_task_info".to_string(),
-            description: Some("获取转写任务信息。如果不提供 task_id，将使用当前上下文中的任务ID".to_string()),
+            description: Some("获取转写任务（记录）信息。如果不提供 task_id，将使用当前上下文中的任务ID".to_string()),
             input_schema: json!({
                 "type": "object",
                 "properties": {

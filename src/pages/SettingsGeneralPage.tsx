@@ -905,9 +905,10 @@ const MCPConfigBlock = () => {
             <table className="table table-zebra w-full">
               <thead>
                 <tr>
-                  <th>名称</th>
-                  <th>工具数量</th>
-                  <th className="w-100 text-right">操作</th>
+                  <th className="w-full">名称</th>
+                  <th className="text-right whitespace-nowrap">工具数量</th>
+                  <th className="text-center whitespace-nowrap">启用</th>
+                  <th className="text-center whitespace-nowrap">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -917,6 +918,20 @@ const MCPConfigBlock = () => {
                     server={server}
                     onDelete={() => handleDelete(server)}
                     onViewTools={() => handleViewTools(server)}
+                    onToggleEnabled={async (enabled) => {
+                      const serverKey = server.key || server.name
+                      try {
+                        await invoke('update_mcp_enabled', {
+                          serverName: serverKey,
+                          enabled,
+                        })
+                        message.success(enabled ? '已启用' : '已禁用')
+                        await dispatch(refreshMCPConfigs()).unwrap()
+                      } catch (err) {
+                        const errorMsg = err instanceof Error ? err.message : '操作失败'
+                        message.error(errorMsg)
+                      }
+                    }}
                   />
                 ))}
               </tbody>
@@ -969,14 +984,18 @@ interface MCPTableRowProps {
   server: MCPServerInfo
   onDelete: () => void
   onViewTools: () => void
+  onToggleEnabled: (enabled: boolean) => Promise<void>
 }
 
 const MCPTableRow = ({
   server,
   onDelete,
   onViewTools,
+  onToggleEnabled,
 }: MCPTableRowProps) => {
   const toolsCount = server.tools?.length || 0
+  const isEnabled = server.config.enabled ?? true
+  const isDefault = server.is_default ?? false
   
   // 获取状态点的颜色
   const getStatusDotColor = () => {
@@ -988,6 +1007,13 @@ const MCPTableRow = ({
       default:
         return 'bg-base-content/30'
     }
+  }
+
+  const handleToggle = async () => {
+    if (isDefault) {
+      return // 默认服务不允许修改
+    }
+    await onToggleEnabled(!isEnabled)
   }
 
   return (
@@ -1007,7 +1033,7 @@ const MCPTableRow = ({
           <span className="font-medium">{server.config.name || server.name}</span>
         </div>
       </td>
-      <td>
+      <td className="text-right whitespace-nowrap">
         {(toolsCount > 0 || server.error) ? (
           <button
             className="btn btn-ghost btn-xs"
@@ -1019,18 +1045,27 @@ const MCPTableRow = ({
           <span className="text-base-content/50">0</span>
         )}
       </td>
-      <td className="text-right">
-        <div className="flex gap-2 justify-end">
-          {!server.is_default && (
-            <button
-              className="btn btn-sm btn-ghost text-error"
-              onClick={onDelete}
-              title="删除"
-            >
-              <HiTrash className="h-4 w-4" />
-            </button>
-          )}
-        </div>
+      <td className="text-center whitespace-nowrap">
+        {!isDefault && (
+          <input
+            type="checkbox"
+            className="toggle toggle-primary"
+            checked={isEnabled}
+            onChange={handleToggle}
+            title={isEnabled ? '点击禁用' : '点击启用'}
+          />
+        )}
+      </td>
+      <td className="text-center whitespace-nowrap">
+        {!server.is_default && (
+          <button
+            className="btn btn-sm btn-ghost text-error"
+            onClick={onDelete}
+            title="删除"
+          >
+            <HiTrash className="h-4 w-4" />
+          </button>
+        )}
       </td>
     </tr>
   )

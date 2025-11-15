@@ -1959,13 +1959,21 @@ async fn get_mcp_configs(
     let mut servers = Vec::new();
     
     // 首先添加默认服务（固定在第一行）
-    servers.push(default_mcp::get_default_server_info());
+    // 确保默认服务的 enabled 始终为 true
+    let mut default_server_info = default_mcp::get_default_server_info();
+    default_server_info.config.enabled = Some(true);
+    servers.push(default_server_info);
     
-    // 然后添加用户配置的服务
-    for (name, server_config) in config.mcp_servers {
+        // 然后添加用户配置的服务
+    for (name, mut server_config) in config.mcp_servers {
         // 跳过默认服务（如果用户配置中有同名服务，忽略它）
         if name == default_mcp::DEFAULT_MCP_SERVER_NAME {
             continue;
+        }
+        
+        // 如果 enabled 字段不存在，默认为 true
+        if server_config.enabled.is_none() {
+            server_config.enabled = Some(true);
         }
         
         // 优先使用配置中的 name 字段，如果没有则使用配置键名
@@ -2084,6 +2092,40 @@ async fn delete_mcp_config(
             let mut config = mcp::load_mcp_config(&config_path_clone)?;
             config.mcp_servers.shift_remove(&server_name);
             mcp::save_mcp_config(&config_path_clone, &config)
+        }
+    })
+    .await
+    .map_err(|e| format!("任务执行失败: {}", e))?
+    .map_err(|e| e)?;
+    
+    Ok(())
+}
+
+// 更新 MCP 配置的 enabled 状态
+#[tauri::command]
+async fn update_mcp_enabled(
+    server_name: String,
+    enabled: bool,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    // 防止修改默认服务的 enabled 状态
+    if server_name == default_mcp::DEFAULT_MCP_SERVER_NAME {
+        return Err("无法修改系统默认服务的启用状态".to_string());
+    }
+    
+    let app_data_dir = get_app_data_dir(&app)?;
+    let config_path = mcp::get_mcp_config_path(&app_data_dir);
+    
+    tokio::task::spawn_blocking({
+        let config_path_clone = config_path.clone();
+        move || {
+            let mut config = mcp::load_mcp_config(&config_path_clone)?;
+            if let Some(server_config) = config.mcp_servers.get_mut(&server_name) {
+                server_config.enabled = Some(enabled);
+                mcp::save_mcp_config(&config_path_clone, &config)
+            } else {
+                Err(format!("MCP 服务器 {} 不存在", server_name))
+            }
         }
     })
     .await
@@ -3097,6 +3139,7 @@ pub fn run() {
             save_mcp_config,
             save_mcp_config_full,
             delete_mcp_config,
+            update_mcp_enabled,
             test_mcp_connection,
             chat_completion,
             stop_chat_completion,
