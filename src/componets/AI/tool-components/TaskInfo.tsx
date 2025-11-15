@@ -22,7 +22,7 @@ const TaskInfo: React.FC<TaskInfoProps> = ({ props }) => {
   } = props
 
   return (
-    <div className="task-info-component bg-base-200 rounded-lg p-4 border border-base-300">
+    <div className="task-info-component bg-base-100 rounded-lg p-4 border border-base-300">
       <div className="text-sm font-semibold text-base-content mb-3">任务信息</div>
       <div className="space-y-4 text-sm">
         {/* 任务状态 */}
