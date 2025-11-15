@@ -581,6 +581,17 @@ const AIPanel = () => {
     ) || null
   }
 
+  // 检查工具是否属于默认 MCP
+  const isDefaultMCPTool = (toolName: string): boolean => {
+    const server = findToolServer(toolName)
+    return server?.is_default === true
+  }
+
+  // 检查所有工具调用是否都属于默认 MCP
+  const areAllDefaultMCPTools = (toolCalls: ToolCall[]): boolean => {
+    return toolCalls.every((toolCall) => isDefaultMCPTool(toolCall.function.name))
+  }
+
   // 处理流式响应
   const handleStreamResponse = async (eventId: string, chatId: string) => {
     // 创建助手消息
@@ -621,13 +632,34 @@ const AIPanel = () => {
         )
       } else if (payload.type === 'tool_calls' && payload.tool_calls) {
         finalToolCalls = payload.tool_calls
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === assistantMessageId
-              ? { ...msg, tool_calls: payload.tool_calls, pendingToolCalls: payload.tool_calls }
-              : msg
+        
+        // 检查是否所有工具都属于默认 MCP
+        const allDefault = areAllDefaultMCPTools(payload.tool_calls)
+        
+        if (allDefault) {
+          // 默认 MCP 工具直接执行，不显示确认界面
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === assistantMessageId
+                ? { ...msg, tool_calls: payload.tool_calls }
+                : msg
+            )
           )
-        )
+          // 直接执行工具调用
+          executeToolCallsAndContinue(payload.tool_calls).catch((err) => {
+            console.error('执行默认 MCP 工具调用失败:', err)
+            message.error(`工具调用失败: ${err}`)
+          })
+        } else {
+          // 非默认 MCP 工具需要用户确认
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === assistantMessageId
+                ? { ...msg, tool_calls: payload.tool_calls, pendingToolCalls: payload.tool_calls }
+                : msg
+            )
+          )
+        }
       } else if (payload.type === 'reasoning' && payload.content) {
         // 处理 reasoning/thinking 内容
         finalReasoning += payload.content

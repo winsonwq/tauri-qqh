@@ -2078,9 +2078,18 @@ async fn delete_mcp_config(
     server_name: String,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
+    // 获取所有服务器信息，检查是否是默认服务
+    let servers = get_mcp_configs(app.clone()).await?;
+    let server_info = servers.iter().find(|s| {
+        s.key.as_ref().map(|k| k == &server_name).unwrap_or(false)
+            || s.name == server_name
+    });
+    
     // 防止删除默认服务
-    if server_name == default_mcp::DEFAULT_MCP_SERVER_NAME {
-        return Err("无法删除系统默认服务".to_string());
+    if let Some(server) = server_info {
+        if server.is_default == Some(true) {
+            return Err("无法删除系统默认服务".to_string());
+        }
     }
     
     let app_data_dir = get_app_data_dir(&app)?;
@@ -2108,9 +2117,18 @@ async fn update_mcp_enabled(
     enabled: bool,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
+    // 获取所有服务器信息，检查是否是默认服务
+    let servers = get_mcp_configs(app.clone()).await?;
+    let server_info = servers.iter().find(|s| {
+        s.key.as_ref().map(|k| k == &server_name).unwrap_or(false)
+            || s.name == server_name
+    });
+    
     // 防止修改默认服务的 enabled 状态
-    if server_name == default_mcp::DEFAULT_MCP_SERVER_NAME {
-        return Err("无法修改系统默认服务的启用状态".to_string());
+    if let Some(server) = server_info {
+        if server.is_default == Some(true) {
+            return Err("无法修改系统默认服务的启用状态".to_string());
+        }
     }
     
     let app_data_dir = get_app_data_dir(&app)?;
@@ -2520,16 +2538,27 @@ async fn execute_mcp_tool_call(
     current_resource_id: Option<String>,
     current_task_id: Option<String>,
 ) -> Result<serde_json::Value, String> {
-    // 检查是否是默认服务
-    if server_name == default_mcp::DEFAULT_MCP_SERVER_NAME {
-        return default_mcp::call_default_tool(
-            &tool_name,
-            arguments,
-            app,
-            current_resource_id,
-            current_task_id,
-        )
-        .await;
+    // 获取所有服务器信息，检查是否是默认服务
+    let servers = get_mcp_configs(app.clone()).await?;
+    
+    // 查找对应的服务器
+    let server_info = servers.iter().find(|s| {
+        s.key.as_ref().map(|k| k == &server_name).unwrap_or(false)
+            || s.name == server_name
+    });
+    
+    // 如果是默认服务，直接调用默认工具
+    if let Some(server) = server_info {
+        if server.is_default == Some(true) {
+            return default_mcp::call_default_tool(
+                &tool_name,
+                arguments,
+                app,
+                current_resource_id,
+                current_task_id,
+            )
+            .await;
+        }
     }
     
     // 获取 MCP 配置
