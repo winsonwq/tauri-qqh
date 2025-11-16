@@ -13,12 +13,14 @@ export function useChatManagement() {
   const [initialMessages, setInitialMessages] = useState<AIMessage[]>([])
 
   // 加载 chat 列表
-  const loadChatList = useCallback(async () => {
+  const loadChatList = useCallback(async (): Promise<ChatListItem[]> => {
     try {
       const chats = await invoke<ChatListItem[]>('get_all_chats')
       setChatList(chats)
+      return chats
     } catch (err) {
       console.error('加载 chat 列表失败:', err)
+      return []
     }
   }, [])
 
@@ -167,4 +169,3 @@ export function useChatManagement() {
     initialMessages,
   }
 }
-

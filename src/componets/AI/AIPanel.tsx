@@ -319,6 +319,62 @@ const AIPanel = () => {
     }
   }, [currentChat, messages.length, selectedConfigId, configs, setCurrentChat, loadChatList, message])
 
+  const handleDeleteChat = useCallback(
+    async (chatId: string) => {
+      try {
+        await invoke('delete_chat', { chatId })
+        message.success('对话已删除')
+        const chats = await loadChatList()
+        setShowHistoryDropdown(false)
+
+        if (chats.length > 0) {
+          const latestChatId = chats[0].id
+          const convertedMessages = await handleSwitchChat(latestChatId)
+          updateMessages(convertedMessages)
+        } else {
+          const newChat = await handleCreateChat()
+          if (newChat) {
+            updateMessages([])
+          }
+        }
+      } catch (err) {
+        console.error('删除对话失败:', err)
+        message.error('删除对话失败')
+      }
+    },
+    [
+      handleCreateChat,
+      handleSwitchChat,
+      loadChatList,
+      message,
+      setShowHistoryDropdown,
+      updateMessages,
+    ],
+  )
+
+  const handleRenameChat = useCallback(
+    async (chatId: string, newTitle: string) => {
+      const trimmed = newTitle.trim()
+      if (!trimmed) {
+        message.error('标题不能为空')
+        return
+      }
+
+      try {
+        await invoke('update_chat_title', { chatId, title: trimmed })
+        await loadChatList()
+        if (currentChat?.id === chatId) {
+          setCurrentChat((prev) => (prev ? { ...prev, title: trimmed } : prev))
+        }
+        message.success('标题已更新')
+      } catch (err) {
+        console.error('更新标题失败:', err)
+        message.error('更新标题失败')
+      }
+    },
+    [currentChat, loadChatList, message, setCurrentChat],
+  )
+
   // 处理创建新 chat
   const onCreateChat = useCallback(async () => {
     try {
@@ -362,6 +418,8 @@ const AIPanel = () => {
           onCreateChat={onCreateChat}
           onSwitchChat={onSwitchChat}
           onSummarizeTitle={handleSummarizeTitle}
+          onDeleteChat={handleDeleteChat}
+          onRenameChat={handleRenameChat}
         />
       </div>
 
