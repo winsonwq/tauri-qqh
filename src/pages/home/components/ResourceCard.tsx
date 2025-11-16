@@ -1,9 +1,5 @@
 import { TranscriptionResource } from '../../../models'
-import {
-  HiFolder,
-  HiClock,
-  HiTrash,
-} from 'react-icons/hi2'
+import { HiFolder, HiClock, HiTrash } from 'react-icons/hi2'
 import Tooltip from '../../../componets/Tooltip'
 import ResourceNameWithIcon from '../../../componets/ResourceNameWithIcon'
 import { formatDateTime } from '../../../utils/format'
@@ -23,7 +19,7 @@ const ResourceCard = ({ resource, onClick, onDelete }: ResourceCardProps) => {
       {onDelete && (
         <button
           type="button"
-          className="btn btn-xs btn-circle btn-ghost text-error absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus:opacity-100 bg-base-100/90 backdrop-blur z-10 transition-opacity"
+          className="btn btn-xs btn-ghost text-error absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus:opacity-100 bg-base-100/90 backdrop-blur z-10 transition-opacity w-6 h-6 p-0 flex items-center justify-center"
           onClick={(event) => {
             event.stopPropagation()
             event.preventDefault()
