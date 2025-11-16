@@ -50,7 +50,17 @@ export function convertChatMessageToAIMessage(msg: ChatMessage): AIMessage {
  */
 export function convertAIMessagesToChatMessages(messages: AIMessage[]) {
   return messages
-    .filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'tool')
+    .filter((m) => {
+      // 过滤角色
+      if (m.role !== 'user' && m.role !== 'assistant' && m.role !== 'tool') {
+        return false
+      }
+      // 过滤掉 content 为空或只包含空白字符的消息
+      if (!m.content || m.content.trim().length === 0) {
+        return false
+      }
+      return true
+    })
     .map((m) => ({
       role: m.role,
       content: m.content,
