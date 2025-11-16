@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
-import { HiArrowLeft } from 'react-icons/hi2';
+import { HiArrowLeft, HiTrash } from 'react-icons/hi2';
 import { useAppDispatch, useAppSelector } from '../../redux/hooks';
 import { setCurrentPage } from '../../redux/slices/featureKeysSlice';
 import { setExtracting } from '../../redux/slices/videoExtractionSlice';
@@ -402,9 +402,16 @@ const ResourceDetailPage = () => {
           >
             <HiArrowLeft className="w-5 h-5" />
           </button>
-          <h1 className="text-lg font-semibold truncate" title={resource.name}>
+          <h1 className="text-lg font-semibold truncate flex-1" title={resource.name}>
             {resource.name}
           </h1>
+          <button
+            className="btn btn-sm btn-error btn-ghost"
+            onClick={() => setShowDeleteModal(true)}
+            title="删除资源"
+          >
+            <HiTrash className="w-4 h-4" />
+          </button>
         </div>
       </div>
 
@@ -418,7 +425,6 @@ const ResourceDetailPage = () => {
             subtitleUrl={subtitleUrl}
             onAudioError={(error: string) => message.error(error)}
             onVideoError={(error: string) => message.error(error)}
-            onDelete={() => setShowDeleteModal(true)}
             playerRef={playerRef}
           />
         </div>
@@ -461,4 +467,3 @@ const ResourceDetailPage = () => {
 };
 
 export default ResourceDetailPage;
-

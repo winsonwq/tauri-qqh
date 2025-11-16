@@ -1,7 +1,6 @@
 import { memo, useMemo, RefObject } from 'react'
 import Player, { PlayerRef } from '../../../componets/Player'
 import { TranscriptionResource, ResourceType } from '../../../models'
-import { HiTrash } from 'react-icons/hi2'
 import { useAppSelector } from '../../../redux/hooks'
 
 interface ResourceInfoCardProps {
@@ -11,7 +10,6 @@ interface ResourceInfoCardProps {
   subtitleUrl?: string | null // WebVTT 字幕的 URL
   onAudioError: (error: string) => void
   onVideoError: (error: string) => void
-  onDelete?: () => void
   playerRef?: RefObject<PlayerRef | null>
 }
 
@@ -22,7 +20,6 @@ const ResourceInfoCard = memo(({
   subtitleUrl,
   onAudioError,
   onVideoError,
-  onDelete,
   playerRef,
 }: ResourceInfoCardProps) => {
   const extractionState = useAppSelector(
@@ -111,15 +108,6 @@ const ResourceInfoCard = memo(({
               </span>
             </div>
           </div>
-          {onDelete && (
-            <button
-              className="btn btn-sm btn-error btn-ghost flex-shrink-0"
-              onClick={onDelete}
-              title="删除资源"
-            >
-              <HiTrash className="w-4 h-4" />
-            </button>
-          )}
         </div>
 
         <div className="text-sm text-base-content/50">
@@ -140,4 +128,3 @@ const ResourceInfoCard = memo(({
 ResourceInfoCard.displayName = 'ResourceInfoCard'
 
 export default ResourceInfoCard
-
