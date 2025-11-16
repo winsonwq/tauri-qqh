@@ -61,22 +61,23 @@ const ToastContainer = () => {
   };
 
   return (
-    <div className="toast toast-top toast-end z-50 fixed top-4 right-4">
+    <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-none">
       {messages.map((message) => {
         if (!visibleMessages.has(message.id)) return null;
         
         return (
           <div
             key={message.id}
-            className={getToastClass(message.type)}
+            role="alert"
+            className={`${getToastClass(message.type)} pointer-events-auto max-w-md w-full`}
             style={{
-              animation: 'slideInRight 0.3s ease-out',
+              animation: 'slideInDown 0.3s ease-out',
             }}
           >
             {getIcon(message.type)}
             <span>{message.content}</span>
             <button
-              className="btn btn-sm btn-circle btn-ghost"
+              className="btn btn-sm btn-circle btn-ghost shrink-0"
               onClick={() => {
                 setVisibleMessages((prev) => {
                   const next = new Set(prev);
@@ -92,13 +93,13 @@ const ToastContainer = () => {
         );
       })}
       <style>{`
-        @keyframes slideInRight {
+        @keyframes slideInDown {
           from {
-            transform: translateX(100%);
+            transform: translateY(-100%);
             opacity: 0;
           }
           to {
-            transform: translateX(0);
+            transform: translateY(0);
             opacity: 1;
           }
         }

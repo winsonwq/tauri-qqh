@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react'
 import { HiPlus, HiClock, HiTrash, HiPencil } from 'react-icons/hi2'
 import { FaMagic } from 'react-icons/fa'
 import Tooltip from '../Tooltip'
+import DeleteConfirmModal from '../DeleteConfirmModal'
 import { Chat, ChatListItem } from '../../models'
 import { formatTime } from '../../utils/aiMessageUtils'
 
@@ -35,6 +36,7 @@ export const ChatBar: React.FC<ChatBarProps> = ({
   const [editingChatId, setEditingChatId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
   const editingInputRef = useRef<HTMLInputElement | null>(null)
+  const [deleteConfirmChatId, setDeleteConfirmChatId] = useState<string | null>(null)
 
   useEffect(() => {
     if (editingChatId && editingInputRef.current) {
@@ -160,7 +162,7 @@ export const ChatBar: React.FC<ChatBarProps> = ({
                           className="btn btn-ghost btn-xs btn-square text-error"
                           onClick={(e) => {
                             e.stopPropagation()
-                            onDeleteChat(chat.id)
+                            setDeleteConfirmChatId(chat.id)
                           }}
                           title="删除对话"
                         >
@@ -175,6 +177,18 @@ export const ChatBar: React.FC<ChatBarProps> = ({
           )}
         </div>
       </div>
+      <DeleteConfirmModal
+        isOpen={deleteConfirmChatId !== null}
+        title="删除对话"
+        message="确定要删除这个对话吗？删除后无法恢复。"
+        onConfirm={() => {
+          if (deleteConfirmChatId) {
+            onDeleteChat(deleteConfirmChatId)
+            setDeleteConfirmChatId(null)
+          }
+        }}
+        onCancel={() => setDeleteConfirmChatId(null)}
+      />
     </div>
   )
 }
