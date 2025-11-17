@@ -17,7 +17,7 @@ const SidePanel = () => {
   const Component = currentComponent ? componentMap[currentComponent] : null;
 
   return (
-    <div className="w-90 h-full bg-base-100 border-l border-base-300 flex flex-col">
+    <div className="h-full w-full bg-base-100 border-l border-base-300 flex flex-col">
       {Component ? (
         <Component />
       ) : (

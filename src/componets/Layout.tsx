@@ -7,7 +7,8 @@ import { loadAIConfigs } from "../redux/slices/aiConfigSlice";
 import AppSideBar from "./AppSideBar";
 import AppContent from "./AppContent";
 import SidePanel from "./SidePanel";
-import { FaBars, FaCommentDots } from "react-icons/fa";
+import { FaBars, FaRobot } from "react-icons/fa";
+import { PanelGroup, Panel, PanelResizeHandle } from "react-resizable-panels";
 
 const Layout = () => {
   const dispatch = useAppDispatch();
@@ -62,28 +63,46 @@ const Layout = () => {
         </div>
 
         {/* 主内容区域和右侧面板 */}
-        <div className="flex-1 flex overflow-hidden">
-          {/* 主内容区域 */}
-          <div className="flex-1 overflow-hidden">
-            <AppContent />
-          </div>
-          
-          {/* 右侧面板 */}
-          <SidePanel />
+        <div className="flex-1 overflow-hidden">
+          {sidePanelOpen ? (
+            <PanelGroup direction="horizontal" className="h-full">
+              {/* 主内容区域 */}
+              <Panel defaultSize={70} minSize={30} className="overflow-hidden relative">
+                <AppContent />
+                {/* 主内容区域右下角的按钮 */}
+                <button
+                  onClick={handleToggleSidePanel}
+                  className="absolute bottom-4 right-4 z-50 btn btn-circle btn-primary shadow-lg transition-all"
+                  title={sidePanelOpen ? '关闭侧边面板' : '打开侧边面板'}
+                >
+                  <FaRobot className="w-5 h-5" />
+                </button>
+              </Panel>
+              
+              {/* 可拖动的分隔线 */}
+              <PanelResizeHandle className="w-1 bg-base-300 hover:bg-primary transition-colors cursor-col-resize" />
+              
+              {/* 右侧面板 */}
+              <Panel defaultSize={30} minSize={20} maxSize={50} className="overflow-hidden">
+                <SidePanel />
+              </Panel>
+            </PanelGroup>
+          ) : (
+            <div className="h-full overflow-hidden relative">
+              <AppContent />
+              {/* 主内容区域右下角的按钮 */}
+              <button
+                onClick={handleToggleSidePanel}
+                className="absolute bottom-4 right-4 z-50 btn btn-circle btn-primary shadow-lg transition-all"
+                title={sidePanelOpen ? '关闭侧边面板' : '打开侧边面板'}
+              >
+                <FaRobot className="w-5 h-5" />
+              </button>
+            </div>
+          )}
         </div>
       </div>
       <AppSideBar sidebarOpen={sidebarOpen} onToggleSidebar={handleToggleSidebar} />
-      
-      {/* 右下角固定按钮 */}
-      <button
-        onClick={handleToggleSidePanel}
-        className={`fixed bottom-4 z-50 btn btn-circle btn-primary shadow-lg transition-all ${
-          sidePanelOpen ? 'right-[23.5rem]' : 'right-4'
-        }`}
-        title={sidePanelOpen ? '关闭侧边面板' : '打开侧边面板'}
-      >
-        <FaCommentDots className="w-5 h-5" />
-      </button>
     </div>
   );
 };
