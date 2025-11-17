@@ -3,6 +3,7 @@ import { HiPlus, HiClock, HiTrash, HiPencil } from 'react-icons/hi2'
 import { FaMagic } from 'react-icons/fa'
 import Tooltip from '../Tooltip'
 import DeleteConfirmModal from '../DeleteConfirmModal'
+import { EditableInput } from '../EditableInput'
 import { Chat, ChatListItem } from '../../models'
 import { formatTime } from '../../utils/aiMessageUtils'
 
@@ -82,12 +83,22 @@ export const ChatBar: React.FC<ChatBarProps> = ({
     }
   }
 
+  const handleTitleSave = async (newTitle: string) => {
+    if (currentChat) {
+      await onRenameChat(currentChat.id, newTitle)
+    }
+  }
+
   return (
     <div className="flex-shrink-0 flex items-center justify-between px-4 py-2 border-b border-base-300 bg-base-200">
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium truncate">
-          {currentChat?.title || '新对话'}
-        </div>
+      <div className="flex-1 min-w-0 mr-2">
+        <EditableInput
+          value={currentChat?.title || '新对话'}
+          placeholder="新对话"
+          onSave={handleTitleSave}
+          disabled={!currentChat}
+          tooltip="单击编辑标题"
+        />
       </div>
       <div className="flex items-center gap-2">
         {currentChat && messagesCount > 0 && (
