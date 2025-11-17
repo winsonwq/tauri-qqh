@@ -218,6 +218,35 @@ pub fn get_all_resources(conn: &Connection) -> SqlResult<Vec<TranscriptionResour
     Ok(resources)
 }
 
+pub fn search_resources(conn: &Connection, keyword: &str) -> SqlResult<Vec<TranscriptionResource>> {
+    let search_pattern = format!("%{}%", keyword);
+    let mut stmt = conn.prepare(
+        "SELECT id, name, file_path, resource_type, extracted_audio_path, status, created_at, updated_at
+         FROM transcription_resources
+         WHERE name LIKE ?1 OR file_path LIKE ?1
+         ORDER BY created_at DESC"
+    )?;
+    
+    let resource_iter = stmt.query_map(params![search_pattern], |row| {
+        Ok(TranscriptionResource {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            file_path: row.get(2)?,
+            resource_type: string_to_resource_type(&row.get::<_, String>(3)?),
+            extracted_audio_path: row.get(4)?,
+            status: row.get(5)?,
+            created_at: row.get(6)?,
+            updated_at: row.get(7)?,
+        })
+    })?;
+    
+    let mut resources = Vec::new();
+    for resource in resource_iter {
+        resources.push(resource?);
+    }
+    Ok(resources)
+}
+
 pub fn update_resource(conn: &Connection, resource: &TranscriptionResource) -> SqlResult<()> {
     conn.execute(
         "UPDATE transcription_resources

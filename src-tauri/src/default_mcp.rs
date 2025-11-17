@@ -67,6 +67,20 @@ pub fn get_default_tools() -> Vec<MCPTool> {
                 "required": []
             }),
         },
+        MCPTool {
+            name: "search_resources".to_string(),
+            description: Some("通过关键词搜索转写资源。搜索会在资源名称和文件路径中进行匹配。如果不提供 keyword 或 keyword 为空，则返回所有资源".to_string()),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "keyword": {
+                        "type": "string",
+                        "description": "搜索关键词（可选，如果不提供或为空则返回所有资源）"
+                    }
+                },
+                "required": []
+            }),
+        },
     ]
 }
 
@@ -87,7 +101,7 @@ pub fn get_default_server_info() -> MCPServerInfo {
 // 此函数可用于验证工具名是否为默认工具，目前未使用但保留以备将来扩展
 #[allow(dead_code)]
 pub fn is_default_tool(tool_name: &str) -> bool {
-    matches!(tool_name, "get_system_info" | "get_resource_info" | "get_task_info")
+    matches!(tool_name, "get_system_info" | "get_resource_info" | "get_task_info" | "search_resources")
 }
 
 // 获取应用数据目录（辅助函数）
@@ -95,6 +109,117 @@ fn get_app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_data_dir()
         .map_err(|e| format!("无法获取应用数据目录: {}", e))
+}
+
+// 工具 Handler: 搜索资源
+async fn handle_search_resources(
+    arguments: Value,
+    app: AppHandle,
+) -> Result<Value, String> {
+    // 解析参数：获取 keyword（可选）
+    let keyword = arguments
+        .get("keyword")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    
+    // 获取数据库路径
+    let app_data_dir = get_app_data_dir(&app)?;
+    let db_path = db::get_db_path(&app_data_dir);
+    
+    // 根据 keyword 是否为空决定查询方式
+    let resources = if let Some(ref kw) = keyword {
+        if kw.trim().is_empty() {
+            // keyword 为空字符串，查询所有资源
+            tokio::task::spawn_blocking({
+                let db_path = db_path.clone();
+                move || {
+                    let conn = db::init_database(&db_path)
+                        .map_err(|e| format!("无法初始化数据库: {}", e))?;
+                    db::get_all_resources(&conn)
+                        .map_err(|e| format!("无法查询资源: {}", e))
+                }
+            })
+            .await
+            .map_err(|e| format!("数据库操作失败: {}", e))??
+        } else {
+            // keyword 有值，进行搜索
+            let keyword = kw.clone();
+            tokio::task::spawn_blocking({
+                let db_path = db_path.clone();
+                move || {
+                    let conn = db::init_database(&db_path)
+                        .map_err(|e| format!("无法初始化数据库: {}", e))?;
+                    db::search_resources(&conn, &keyword)
+                        .map_err(|e| format!("无法搜索资源: {}", e))
+                }
+            })
+            .await
+            .map_err(|e| format!("数据库操作失败: {}", e))??
+        }
+    } else {
+        // 未提供 keyword，查询所有资源
+        tokio::task::spawn_blocking({
+            let db_path = db_path.clone();
+            move || {
+                let conn = db::init_database(&db_path)
+                    .map_err(|e| format!("无法初始化数据库: {}", e))?;
+                db::get_all_resources(&conn)
+                    .map_err(|e| format!("无法查询资源: {}", e))
+            }
+        })
+        .await
+        .map_err(|e| format!("数据库操作失败: {}", e))??
+    };
+    
+    // 为每个资源获取任务数量
+    let mut resources_with_task_count = Vec::new();
+    for resource in resources {
+        let task_count = tokio::task::spawn_blocking({
+            let db_path = db_path.clone();
+            let resource_id = resource.id.clone();
+            move || {
+                let conn = db::init_database(&db_path)
+                    .map_err(|e| format!("无法初始化数据库: {}", e))?;
+                db::get_tasks_by_resource(&conn, &resource_id)
+                    .map(|tasks| tasks.len())
+                    .map_err(|e| format!("无法查询任务: {}", e))
+            }
+        })
+        .await
+        .map_err(|e| format!("数据库操作失败: {}", e))??;
+        
+        let resource_info = json!({
+            "id": resource.id,
+            "name": resource.name,
+            "file_path": resource.file_path,
+            "resource_type": match resource.resource_type {
+                crate::ResourceType::Audio => "audio",
+                crate::ResourceType::Video => "video",
+            },
+            "extracted_audio_path": resource.extracted_audio_path,
+            "status": resource.status,
+            "created_at": resource.created_at,
+            "updated_at": resource.updated_at,
+            "task_count": task_count,
+        });
+        
+        resources_with_task_count.push(resource_info);
+    }
+    
+    // 返回 component 格式，指定组件名为 resource-list
+    Ok(json!({
+        "content": [
+            {
+                "type": "component",
+                "componentName": "resource-list",
+                "props": {
+                    "resources": resources_with_task_count,
+                    "keyword": keyword.unwrap_or_default(),
+                    "count": resources_with_task_count.len()
+                }
+            }
+        ]
+    }))
 }
 
 // 调用默认工具
@@ -112,6 +237,9 @@ pub async fn call_default_tool(
         }
         "get_task_info" => {
             handle_get_task_info(arguments, app, current_task_id).await
+        }
+        "search_resources" => {
+            handle_search_resources(arguments, app).await
         }
         _ => Err(format!("默认工具 {} 不存在", tool_name)),
     }
