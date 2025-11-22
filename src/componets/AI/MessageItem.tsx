@@ -9,6 +9,16 @@ import { formatDateTime } from '../../utils/format'
 import { ReasoningSection } from './ReasoningSection'
 import { ToolCallsSection } from './ToolCallsSection'
 import { ToolCallDetailModal } from './ToolCallDetailModal'
+import { AgentType, PlannerResponse, Todo } from '../../agents/agentTypes'
+import { ComponentRenderer } from './ComponentRegistry'
+import { parsePartialJson } from '../../utils/partialJsonParser'
+
+// Agent 名称映射
+const agentNameMap: Record<AgentType, string> = {
+  planner: '规划者 (Planner)',
+  executor: '执行者 (Executor)',
+  verifier: '验证者 (Verifier)',
+}
 
 interface MessageItemProps {
   message: AIMessage
@@ -18,6 +28,7 @@ interface MessageItemProps {
   onToolCallCancel?: (messageId: string) => void
   isStreaming?: boolean
   isLastAssistantMessage?: boolean
+  messages?: AIMessage[] // 消息历史，用于查找 planner 的 todos
 }
 
 // 获取消息容器样式
@@ -42,11 +53,63 @@ const getMessageContentClasses = (role: 'user' | 'assistant' | 'tool') => {
     : `${baseClasses} bg-base-100`
 }
 
+// 从消息历史中查找 planner 的 todos
+const findPlannerTodos = (messages: AIMessage[] = []): Todo[] => {
+  // 从后往前查找最近的 planner 消息
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]
+    if (
+      msg.role === 'assistant' &&
+      msg.agentType === 'planner' &&
+      msg.content
+    ) {
+      const jsonMatch = msg.content.match(/\{[\s\S]*\}/)
+      if (jsonMatch) {
+        const parsed = parsePartialJson<PlannerResponse>(jsonMatch[0])
+        if (parsed?.data?.todos && Array.isArray(parsed.data.todos)) {
+          return parsed.data.todos
+        }
+      }
+    }
+  }
+  return []
+}
+
 // 渲染消息内容
-const renderMessageContent = (content: string, showCursor?: boolean) => {
+const renderMessageContent = (
+  content: string,
+  showCursor?: boolean,
+  agentType?: AgentType,
+  messages?: AIMessage[],
+) => {
+  // 对于 planner 和 verifier，使用组件方式显示
+  if (agentType === 'planner' || agentType === 'verifier') {
+    const componentName =
+      agentType === 'planner' ? 'planner-response' : 'verifier-response'
+
+    // 对于 verifier，查找 planner 的 todos 并传递
+    const props: any = { content }
+    if (agentType === 'verifier' && messages) {
+      const plannerTodos = findPlannerTodos(messages)
+      if (plannerTodos.length > 0) {
+        props.config = { plannerTodos }
+      }
+    }
+
+    return (
+      <div className="text-sm prose prose-sm max-w-none text-base-content break-words">
+        <ComponentRenderer componentName={componentName} props={props} />
+        {showCursor && <span className="ai-cursor" />}
+      </div>
+    )
+  }
+
   return (
     <div className="text-sm prose prose-sm max-w-none text-base-content break-words">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={markdownComponents}
+      >
         {content}
       </ReactMarkdown>
       {showCursor && <span className="ai-cursor" />}
@@ -54,11 +117,14 @@ const renderMessageContent = (content: string, showCursor?: boolean) => {
   )
 }
 
-// 渲染时间戳
-const renderTimestamp = (timestamp: Date) => {
+// 渲染时间戳和 Agent 名称
+const renderTimestampAndAgent = (timestamp: Date, agentType?: AgentType) => {
   return (
-    <div className="text-xs mt-2 text-base-content/60">
-      {formatDateTime(timestamp)}
+    <div className="text-xs mt-2 text-base-content/50 flex items-center gap-2">
+      {agentType && (
+        <span className="text-base-content/40">{agentNameMap[agentType]}</span>
+      )}
+      <span>{formatDateTime(timestamp)}</span>
     </div>
   )
 }
@@ -71,6 +137,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   onToolCallCancel,
   isStreaming,
   isLastAssistantMessage,
+  messages,
 }) => {
   const [viewingToolCall, setViewingToolCall] = useState<ToolCall | null>(null)
 
@@ -87,7 +154,9 @@ export const MessageItem: React.FC<MessageItemProps> = ({
     >
       <div className={getMessageContentClasses(message.role)}>
         {/* 显示 reasoning/thinking 内容 */}
-        {message.reasoning && <ReasoningSection reasoning={message.reasoning} />}
+        {message.reasoning && (
+          <ReasoningSection reasoning={message.reasoning} />
+        )}
 
         {/* 显示主要内容 */}
         {message.content &&
@@ -99,11 +168,18 @@ export const MessageItem: React.FC<MessageItemProps> = ({
                 </div>
               )}
               <div className="bg-base-200 rounded-lg p-3 border border-base-300">
-                <ToolResultDisplay items={parseToolResultContent(message.content)} />
+                <ToolResultDisplay
+                  items={parseToolResultContent(message.content)}
+                />
               </div>
             </div>
           ) : (
-            renderMessageContent(message.content, shouldShowCursor)
+            renderMessageContent(
+              message.content,
+              shouldShowCursor,
+              message.role === 'assistant' ? message.agentType : undefined,
+              messages,
+            )
           ))}
         {/* 如果没有内容但正在流式输出，也显示光标 */}
         {!message.content && shouldShowCursor && (
@@ -140,9 +216,11 @@ export const MessageItem: React.FC<MessageItemProps> = ({
           onClose={() => setViewingToolCall(null)}
         />
 
-        {renderTimestamp(message.timestamp)}
+        {renderTimestampAndAgent(
+          message.timestamp,
+          message.role === 'assistant' ? message.agentType : undefined,
+        )}
       </div>
     </div>
   )
 }
-

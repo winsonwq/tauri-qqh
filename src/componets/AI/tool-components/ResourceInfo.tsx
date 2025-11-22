@@ -1,6 +1,9 @@
-import React from 'react'
+import React, { useMemo, useRef } from 'react'
 import { ComponentProps } from '../ComponentRegistry'
-import { formatDateTime } from '../../../utils/format'
+import { convertFileSrc } from '@tauri-apps/api/core'
+import ResourceInfoCard from '../../../pages/resource-detail/components/ResourceInfoCard'
+import { TranscriptionResource, ResourceType, TranscriptionStatus } from '../../../models'
+import { PlayerRef } from '../../Player'
 
 interface ResourceInfoProps {
   props: ComponentProps
@@ -19,86 +22,82 @@ const ResourceInfo: React.FC<ResourceInfoProps> = ({ props }) => {
     task_count,
   } = props
 
-  return (
-    <div className="resource-info-component bg-base-100 rounded-lg p-4 border border-base-300">
-      <div className="text-sm font-semibold text-base-content mb-3">资源信息</div>
-      <div className="space-y-4 text-sm">
-        {/* 资源名称 */}
-        <div className="flex flex-col">
-          <span className="text-base-content/70 mb-1">名称</span>
-          <span className="text-base-content font-medium">{name || '-'}</span>
-        </div>
+  const playerRef = useRef<PlayerRef>(null)
 
-        {/* 资源类型 */}
-        <div className="flex flex-col">
-          <span className="text-base-content/70 mb-1">类型</span>
-          <span className="text-base-content">
-            <span className={`badge badge-sm ${resource_type === 'audio' ? 'badge-info' : 'badge-primary'}`}>
-              {resource_type === 'audio' ? '音频' : '视频'}
-            </span>
-          </span>
-        </div>
+  // 将 props 转换为 TranscriptionResource 格式
+  const resource: TranscriptionResource | null = useMemo(() => {
+    if (!id || !name || !file_path || !resource_type) {
+      return null
+    }
 
-        {/* 状态 */}
-        <div className="flex flex-col">
-          <span className="text-base-content/70 mb-1">状态</span>
-          <span className="text-base-content">
-            <span className={`badge badge-sm ${
-              status === 'completed' ? 'badge-success' :
-              status === 'processing' ? 'badge-warning' :
-              status === 'failed' ? 'badge-error' :
-              'badge-neutral'
-            }`}>
-              {status || '-'}
-            </span>
-          </span>
-        </div>
+    return {
+      id,
+      name,
+      file_path,
+      resource_type: resource_type as ResourceType,
+      extracted_audio_path,
+      status: (status as TranscriptionStatus) || TranscriptionStatus.PENDING,
+      created_at: created_at || new Date().toISOString(),
+      updated_at: updated_at || new Date().toISOString(),
+    }
+  }, [id, name, file_path, resource_type, extracted_audio_path, status, created_at, updated_at])
 
-        {/* 文件路径 */}
-        {file_path && (
-          <div className="flex flex-col">
-            <span className="text-base-content/70 mb-1">文件路径</span>
-            <span className="text-base-content/90 break-all">{file_path}</span>
-          </div>
-        )}
+  // 生成播放 URL
+  const audioSrc = useMemo(() => {
+    if (!resource) return null
+    if (resource.resource_type === ResourceType.VIDEO) {
+      // 视频资源使用提取的音频路径
+      return resource.extracted_audio_path
+        ? convertFileSrc(resource.extracted_audio_path)
+        : null
+    } else {
+      // 音频资源使用文件路径
+      return file_path ? convertFileSrc(file_path) : null
+    }
+  }, [resource, file_path])
 
-        {/* 提取的音频路径 */}
-        {extracted_audio_path && (
-          <div className="flex flex-col">
-            <span className="text-base-content/70 mb-1">音频路径</span>
-            <span className="text-base-content/90 break-all">{extracted_audio_path}</span>
-          </div>
-        )}
+  const videoSrc = useMemo(() => {
+    if (!resource || resource.resource_type !== ResourceType.VIDEO) {
+      return null
+    }
+    return file_path ? convertFileSrc(file_path) : null
+  }, [resource, file_path])
 
-        {/* 任务数量 */}
-        {task_count !== undefined && (
-          <div className="flex flex-col">
-            <span className="text-base-content/70 mb-1">任务数</span>
-            <span className="text-base-content">{task_count}</span>
-          </div>
-        )}
+  // 错误处理回调
+  const handleAudioError = (error: string) => {
+    console.error('音频加载失败:', error)
+  }
 
-        {/* 创建时间 */}
-        {created_at && (
-          <div className="flex flex-col">
-            <span className="text-base-content/70 mb-1">创建时间</span>
-            <span className="text-base-content/90">{formatDateTime(new Date(created_at))}</span>
-          </div>
-        )}
+  const handleVideoError = (error: string) => {
+    console.error('视频加载失败:', error)
+  }
 
-        {/* 更新时间 */}
-        {updated_at && (
-          <div className="flex flex-col">
-            <span className="text-base-content/70 mb-1">更新时间</span>
-            <span className="text-base-content/90">{formatDateTime(new Date(updated_at))}</span>
-          </div>
-        )}
-
-        {/* ID（隐藏但保留在 DOM 中供 AI 识别） */}
-        {id && (
-          <div className="hidden" data-resource-id={id} />
-        )}
+  if (!resource) {
+    return (
+      <div className="resource-info-component bg-base-100 rounded-lg p-3 border border-base-300">
+        <div className="text-sm text-base-content/70">资源信息不完整</div>
       </div>
+    )
+  }
+
+  return (
+    <div className="resource-info-component bg-base-100 rounded-lg border border-base-300">
+      <ResourceInfoCard
+        resource={resource}
+        audioSrc={audioSrc}
+        videoSrc={videoSrc}
+        onAudioError={handleAudioError}
+        onVideoError={handleVideoError}
+        playerRef={playerRef}
+      />
+      {/* 任务数量信息 */}
+      {task_count !== undefined && (
+        <div className="px-6 pb-4 text-xs text-base-content/60">
+          {task_count} 个任务
+        </div>
+      )}
+      {/* ID（隐藏但保留在 DOM 中供 AI 识别） */}
+      <div className="hidden" data-resource-id={id} />
     </div>
   )
 }

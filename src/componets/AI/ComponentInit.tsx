@@ -5,6 +5,8 @@ import { componentRegistry } from './ComponentRegistry'
 import ResourceInfo from './tool-components/ResourceInfo'
 import TaskInfo from './tool-components/TaskInfo'
 import ResourceList from './tool-components/ResourceList'
+import PlannerResponseDisplay from './agent-components/PlannerResponseDisplay'
+import VerifierResponseDisplay from './agent-components/VerifierResponseDisplay'
 
 // 初始化并注册所有 Component
 export function initComponents() {
@@ -16,6 +18,10 @@ export function initComponents() {
   
   // 注册资源列表组件
   componentRegistry.register('resource-list', ResourceList)
+  
+  // 注册 Agent 响应组件
+  componentRegistry.register('planner-response', PlannerResponseDisplay)
+  componentRegistry.register('verifier-response', VerifierResponseDisplay)
   
   // 可以在这里继续注册其他组件
 }

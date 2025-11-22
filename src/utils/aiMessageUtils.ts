@@ -1,5 +1,7 @@
 import { ToolCall } from '../componets/AI/ToolCallConfirmModal'
 import { Message as ChatMessage } from '../models'
+import { AgentType } from '../agents/agentTypes'
+import { parsePartialJson } from './partialJsonParser'
 
 export interface AIMessage {
   id: string
@@ -11,6 +13,7 @@ export interface AIMessage {
   name?: string // tool name
   reasoning?: string // thinking/reasoning 内容
   pendingToolCalls?: ToolCall[] // 待确认的工具调用
+  agentType?: AgentType // agent 类型（planner/executor/verifier）
 }
 
 /**
@@ -18,6 +21,39 @@ export interface AIMessage {
  */
 export function generateEventId(): string {
   return `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`
+}
+
+/**
+ * 从消息内容推断 agentType
+ */
+function inferAgentTypeFromContent(content: string): AgentType | undefined {
+  if (!content || typeof content !== 'string') {
+    return undefined
+  }
+
+  // 尝试提取 JSON 部分
+  const jsonMatch = content.match(/\{[\s\S]*\}/)
+  if (!jsonMatch) {
+    return undefined
+  }
+
+  try {
+    // 尝试解析为 PlannerResponse
+    const plannerData = parsePartialJson<{ todos?: any[]; needsMorePlanning?: boolean }>(jsonMatch[0])
+    if (plannerData?.data && (plannerData.data.todos || plannerData.data.needsMorePlanning !== undefined)) {
+      return 'planner'
+    }
+
+    // 尝试解析为 VerifierResponse
+    const verifierData = parsePartialJson<{ tasks?: any[]; allCompleted?: boolean }>(jsonMatch[0])
+    if (verifierData?.data && (verifierData.data.tasks || verifierData.data.allCompleted !== undefined)) {
+      return 'verifier'
+    }
+  } catch {
+    // 解析失败，返回 undefined
+  }
+
+  return undefined
 }
 
 /**
@@ -33,6 +69,11 @@ export function convertChatMessageToAIMessage(msg: ChatMessage): AIMessage {
     }
   }
 
+  // 从内容推断 agentType（仅对 assistant 消息）
+  const agentType = msg.role === 'assistant' 
+    ? inferAgentTypeFromContent(msg.content)
+    : undefined
+
   return {
     id: msg.id,
     role: msg.role as 'user' | 'assistant' | 'tool',
@@ -42,6 +83,7 @@ export function convertChatMessageToAIMessage(msg: ChatMessage): AIMessage {
     tool_call_id: msg.tool_call_id || undefined,
     name: msg.name || undefined,
     reasoning: msg.reasoning || undefined,
+    agentType,
   }
 }
 

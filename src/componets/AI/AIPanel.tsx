@@ -4,6 +4,7 @@ import { useChatManagement } from '../../hooks/useChatManagement'
 import { useStickyMessages } from '../../hooks/useStickyMessages'
 import { useStreamResponse } from '../../hooks/useStreamResponse'
 import { useToolCalls } from '../../hooks/useToolCalls'
+import { runAgentWorkflow } from '../../hooks/useAgentWorkflow'
 import { invoke } from '@tauri-apps/api/core'
 import AIMessageInput from './AIMessageInput'
 import { ToolCall } from './ToolCallConfirmModal'
@@ -32,6 +33,7 @@ const AIPanel = () => {
   const mcpServers = useAppSelector((state) => state.mcp.servers)
   const { currentResourceId, currentTaskId } = useAppSelector((state) => state.aiContext)
   const [selectedConfigId, setSelectedConfigId] = useState<string>('')
+  const isStoppedRef = useRef<boolean>(false)
 
   // 动态生成 system message，根据当前上下文状态添加提示信息
   const systemMessage = useMemo(() => {
@@ -150,6 +152,9 @@ const AIPanel = () => {
         }
       }
 
+      // 重置停止标志
+      isStoppedRef.current = false
+
       // 添加用户消息
       const userMessageId = Date.now().toString()
       const userMessage: AIMessage = {
@@ -176,41 +181,28 @@ const AIPanel = () => {
       }
 
       try {
-        // 构建消息历史（包含新添加的用户消息）
-        const allMessages = [...messages, userMessage]
-        const chatMessages = convertAIMessagesToChatMessages(allMessages)
-
-        // 获取可用工具
-        const tools = getAvailableTools(mcpServers)
-
-        // 在前端生成 eventId，这样可以先设置监听器，避免丢失第一个事件
-        const eventId = generateEventId()
-        console.log('[AI Frontend] 生成 eventId:', eventId)
-
-        setCurrentStreamEventId(eventId)
         setIsStreaming(true)
 
-        // 先设置监听器，然后再调用后端
-        await startStreamResponse(
-          eventId,
-          chatId!,
-          updateMessages,
-          executeToolCallsAndContinue,
-          mcpServers,
-        )
-
-        // 调用流式 API（传递 eventId）
-        console.log('[AI Frontend] 调用 chat_completion，configId:', effectiveConfigId)
-        await invoke<string>('chat_completion', {
+        // 使用 Agent 工作流
+        await runAgentWorkflow({
           configId: effectiveConfigId,
-          messages: chatMessages,
-          tools: tools.length > 0 ? tools : null,
+          chatId: chatId!,
+          userMessage: messageText,
+          messages: messages,
+          updateMessages: updateMessages,
+          messagesRef: messagesRef,
+          mcpServers: mcpServers,
+          currentResourceId: currentResourceId,
+          currentTaskId: currentTaskId,
           systemMessage: systemMessage,
-          eventId: eventId,
+          isStoppedRef: isStoppedRef,
         })
       } catch (err) {
         console.error('AI 对话失败:', err)
-        message.error(`AI 对话失败: ${err}`)
+        if (!isStoppedRef.current) {
+          message.error(`AI 对话失败: ${err}`)
+        }
+      } finally {
         setIsStreaming(false)
         setCurrentStreamEventId(null)
       }
@@ -221,11 +213,13 @@ const AIPanel = () => {
       handleCreateChat,
       updateMessages,
       messages,
+      messagesRef,
       mcpServers,
+      currentResourceId,
+      currentTaskId,
       systemMessage,
-      setCurrentStreamEventId,
       setIsStreaming,
-      startStreamResponse,
+      setCurrentStreamEventId,
       executeToolCallsAndContinue,
       message,
     ],
@@ -265,6 +259,9 @@ const AIPanel = () => {
 
   // 处理停止请求
   const handleStop = useCallback(async () => {
+    // 设置停止标志
+    isStoppedRef.current = true
+
     if (currentStreamEventId) {
       try {
         await invoke('stop_chat_completion', { eventId: currentStreamEventId })
@@ -274,7 +271,10 @@ const AIPanel = () => {
         message.error('停止请求失败')
       }
     }
-  }, [currentStreamEventId, message])
+
+    setIsStreaming(false)
+    setCurrentStreamEventId(null)
+  }, [currentStreamEventId, message, setIsStreaming, setCurrentStreamEventId])
 
   // 使用 AI 总结 chat 标题
   const handleSummarizeTitle = useCallback(async () => {
@@ -438,6 +438,7 @@ const AIPanel = () => {
                   key={message.id}
                   message={message}
                   isSticky={isSticky}
+                  messages={messages}
                   onRef={(el) => setMessageRef(message.id, el)}
                   onToolCallConfirm={handleToolCallConfirm}
                   onToolCallCancel={handleToolCallCancel}

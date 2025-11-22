@@ -3585,6 +3585,11 @@ parse-entities@^4.0.0:
     is-decimal "^2.0.0"
     is-hexadecimal "^2.0.0"
 
+partial-json-parser@^1.2.2:
+  version "1.2.2"
+  resolved "https://registry.npmjs.org/partial-json-parser/-/partial-json-parser-1.2.2.tgz#56d753bb980136ea4ee42ee413383f8dad26edef"
+  integrity sha512-4LH14R2aykVDWefU2qJjL1Rli610fjKxOJQ3SjKwWzKYJvIkjflcGtsd1Ix09U7UP5G6V1GyHtbgPjknFD/G7w==
+
 path-exists@^4.0.0:
   version "4.0.0"
   resolved "https://registry.npmjs.org/path-exists/-/path-exists-4.0.0.tgz"

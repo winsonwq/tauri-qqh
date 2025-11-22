@@ -465,8 +465,6 @@ async fn handle_get_task_info(
         "completed_at": task.completed_at,
         "result": task.result,
         "error": task.error,
-        "log": task.log,
-        "params": task.params,
     });
     
     // 如果资源存在，添加资源名称
