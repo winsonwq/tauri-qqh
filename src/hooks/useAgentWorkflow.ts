@@ -13,7 +13,7 @@ import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { AIMessage, convertAIMessagesToChatMessages, generateEventId } from '../utils/aiMessageUtils'
 import { ToolCall } from '../componets/AI/ToolCallConfirmModal'
 import { loadAgentPrompt } from '../agents/loadPrompts'
-import { PlannerResponse, Todo, VerifierResponse, AgentType } from '../agents/agentTypes'
+import { PlannerResponse, Todo, VerifierResponse, AgentType, AgentAction } from '../agents/agentTypes'
 import { MCPServerInfo } from '../models'
 import { getAvailableTools, findToolServer } from '../utils/toolUtils'
 
@@ -145,7 +145,12 @@ async function waitForStreamComplete(
         updateMessages((prev) =>
           prev.map((msg) =>
             msg.id === assistantMessageId
-              ? { ...msg, tool_calls: payload.tool_calls }
+              ? { 
+                  ...msg, 
+                  tool_calls: payload.tool_calls,
+                  // 如果有 tool_calls，设置 action 为 calling_tool
+                  action: msg.agentType === 'executor' ? 'calling_tool' as AgentAction : msg.action
+                }
               : msg
           )
         )
@@ -154,7 +159,12 @@ async function waitForStreamComplete(
         updateMessages((prev) =>
           prev.map((msg) =>
             msg.id === assistantMessageId
-              ? { ...msg, reasoning: (msg.reasoning || '') + payload.content }
+              ? { 
+                  ...msg, 
+                  reasoning: (msg.reasoning || '') + payload.content,
+                  // 如果有 reasoning，设置 action 为 thinking
+                  action: msg.agentType === 'executor' ? 'thinking' as AgentAction : msg.action
+                }
               : msg
           )
         )
@@ -350,11 +360,11 @@ export async function runAgentWorkflow({
         isStoppedRef.current ? isStoppedRef : { current: false },
       )
 
-      // 更新消息的 agentType
+      // 更新消息的 agentType 和 action
       updateMessages((prev) =>
         prev.map((msg) =>
           msg.id === assistantMessageId
-            ? { ...msg, agentType: 'planner' as AgentType }
+            ? { ...msg, agentType: 'planner' as AgentType, action: 'planning' as AgentAction }
             : msg
         )
       )
@@ -472,11 +482,19 @@ export async function runAgentWorkflow({
           toolCallsCount: response.toolCalls?.length || 0,
         })
 
-        // 更新消息的 agentType
+        // 更新消息的 agentType 和 action
+        // 根据是否有 reasoning 或 tool_calls 来决定 action
+        let action: AgentAction = 'thinking' // 默认是思考
+        if (response.toolCalls && response.toolCalls.length > 0) {
+          action = 'calling_tool'
+        } else if (response.reasoning) {
+          action = 'thinking'
+        }
+
         updateMessages((prev) =>
           prev.map((msg) =>
             msg.id === assistantMessageId
-              ? { ...msg, agentType: 'executor' as AgentType }
+              ? { ...msg, agentType: 'executor' as AgentType, action: action as AgentAction }
               : msg
           )
         )
@@ -598,11 +616,11 @@ export async function runAgentWorkflow({
       isStoppedRef.current ? isStoppedRef : { current: false },
     )
 
-    // 更新消息的 agentType
+    // 更新消息的 agentType 和 action
     updateMessages((prev) =>
       prev.map((msg) =>
         msg.id === assistantMessageId
-          ? { ...msg, agentType: 'verifier' as AgentType }
+          ? { ...msg, agentType: 'verifier' as AgentType, action: 'verifying' as AgentAction }
           : msg
       )
     )
@@ -651,11 +669,11 @@ export async function runAgentWorkflow({
         isStoppedRef.current ? isStoppedRef : { current: false },
       )
 
-      // 更新消息的 agentType
+      // 更新消息的 agentType 和 action（总结阶段）
       updateMessages((prev) =>
         prev.map((msg) =>
           msg.id === summaryAssistantMessageId
-            ? { ...msg, agentType: 'planner' as AgentType }
+            ? { ...msg, agentType: 'planner' as AgentType, action: 'summarizing' as AgentAction }
             : msg
         )
       )

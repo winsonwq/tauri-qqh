@@ -9,16 +9,10 @@ import { formatDateTime } from '../../utils/format'
 import { ReasoningSection } from './ReasoningSection'
 import { ToolCallsSection } from './ToolCallsSection'
 import { ToolCallDetailModal } from './ToolCallDetailModal'
-import { AgentType, PlannerResponse, Todo } from '../../agents/agentTypes'
+import { AgentType, PlannerResponse, Todo, AgentAction } from '../../agents/agentTypes'
 import { ComponentRenderer } from './ComponentRegistry'
 import { parsePartialJson } from '../../utils/partialJsonParser'
-
-// Agent 名称映射
-const agentNameMap: Record<AgentType, string> = {
-  planner: '规划者 (Planner)',
-  executor: '执行者 (Executor)',
-  verifier: '验证者 (Verifier)',
-}
+import { AgentActionLabel } from './AgentActionLabel'
 
 interface MessageItemProps {
   message: AIMessage
@@ -51,6 +45,49 @@ const getMessageContentClasses = (role: 'user' | 'assistant' | 'tool') => {
   return role === 'user'
     ? `${baseClasses} bg-base-200 border rounded-lg border-base-300`
     : `${baseClasses} bg-base-100`
+}
+
+// 推断消息的行为类型
+const inferMessageAction = (message: AIMessage): AgentAction | undefined => {
+  // 如果消息已经有 action 字段，直接使用
+  if (message.action) {
+    return message.action
+  }
+
+  // 如果没有 action，根据消息状态推断
+  if (message.role !== 'assistant') {
+    return undefined
+  }
+
+  // 优先级：pendingToolCalls > reasoning > agentType > tool_calls
+  if (message.pendingToolCalls && message.pendingToolCalls.length > 0) {
+    return 'calling_tool'
+  }
+
+  if (message.reasoning) {
+    return 'thinking'
+  }
+
+  if (message.agentType === 'planner') {
+    // 检查是否是总结消息（通过消息 ID 或内容判断）
+    if (message.id === 'planner-summary-msg' || !message.content.match(/\{[\s\S]*"todos"/)) {
+      return 'summarizing'
+    }
+    return 'planning'
+  }
+
+  if (message.agentType === 'executor') {
+    if (message.tool_calls && message.tool_calls.length > 0) {
+      return 'calling_tool'
+    }
+    return 'thinking'
+  }
+
+  if (message.agentType === 'verifier') {
+    return 'verifying'
+  }
+
+  return undefined
 }
 
 // 从消息历史中查找 planner 的 todos
@@ -117,13 +154,10 @@ const renderMessageContent = (
   )
 }
 
-// 渲染时间戳和 Agent 名称
-const renderTimestampAndAgent = (timestamp: Date, agentType?: AgentType) => {
+// 渲染时间戳
+const renderTimestamp = (timestamp: Date) => {
   return (
-    <div className="text-xs mt-2 text-base-content/50 flex items-center gap-2">
-      {agentType && (
-        <span className="text-base-content/40">{agentNameMap[agentType]}</span>
-      )}
+    <div className="text-xs mt-2 text-base-content/50">
       <span>{formatDateTime(timestamp)}</span>
     </div>
   )
@@ -145,6 +179,16 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   const shouldShowCursor =
     message.role === 'assistant' && isLastAssistantMessage && isStreaming
 
+  // 推断消息的行为类型
+  const messageAction = inferMessageAction(message)
+  
+  // 判断行为是否正在进行中
+  const isActionActive = 
+    message.role === 'assistant' && 
+    isLastAssistantMessage && 
+    isStreaming &&
+    !!messageAction
+
   return (
     <div
       ref={onRef}
@@ -153,6 +197,11 @@ export const MessageItem: React.FC<MessageItemProps> = ({
       style={isSticky ? { top: 0 } : undefined}
     >
       <div className={getMessageContentClasses(message.role)}>
+        {/* 显示行为标签（在消息内容上方） */}
+        {message.role === 'assistant' && messageAction && (
+          <AgentActionLabel action={messageAction} isActive={!!isActionActive} />
+        )}
+
         {/* 显示 reasoning/thinking 内容 */}
         {message.reasoning && (
           <ReasoningSection reasoning={message.reasoning} />
@@ -216,10 +265,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
           onClose={() => setViewingToolCall(null)}
         />
 
-        {renderTimestampAndAgent(
-          message.timestamp,
-          message.role === 'assistant' ? message.agentType : undefined,
-        )}
+        {renderTimestamp(message.timestamp)}
       </div>
     </div>
   )

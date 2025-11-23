@@ -1,6 +1,6 @@
 import { ToolCall } from '../componets/AI/ToolCallConfirmModal'
 import { Message as ChatMessage } from '../models'
-import { AgentType } from '../agents/agentTypes'
+import { AgentType, AgentAction } from '../agents/agentTypes'
 import { parsePartialJson } from './partialJsonParser'
 
 export interface AIMessage {
@@ -14,6 +14,7 @@ export interface AIMessage {
   reasoning?: string // thinking/reasoning 内容
   pendingToolCalls?: ToolCall[] // 待确认的工具调用
   agentType?: AgentType // agent 类型（planner/executor/verifier）
+  action?: AgentAction // agent 行为类型
 }
 
 /**
