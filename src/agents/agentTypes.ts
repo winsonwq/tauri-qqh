@@ -41,12 +41,16 @@ export interface Todo {
 }
 
 export interface PlannerResponse {
+  type?: 'component'
+  component?: string
   needsMorePlanning: boolean
   todos: Todo[]
   summary: string
 }
 
 export interface VerifierResponse {
+  type?: 'component'
+  component?: string
   allCompleted: boolean
   tasks: Array<{
     id: string

@@ -211,7 +211,7 @@ async fn handle_search_resources(
         "content": [
             {
                 "type": "component",
-                "componentName": "resource-list",
+                "component": "resource-list",
                 "props": {
                     "resources": resources_with_task_count,
                     "keyword": keyword.unwrap_or_default(),
@@ -396,7 +396,7 @@ async fn handle_get_resource_info(
         "content": [
             {
                 "type": "component",
-                "componentName": "resource-info",
+                "component": "resource-info",
                 "props": resource_info
             }
         ]
@@ -481,7 +481,7 @@ async fn handle_get_task_info(
         "content": [
             {
                 "type": "component",
-                "componentName": "task-info",
+                "component": "task-info",
                 "props": task_info
             }
         ]

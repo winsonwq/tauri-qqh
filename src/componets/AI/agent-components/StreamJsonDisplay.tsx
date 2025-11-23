@@ -1,17 +1,9 @@
 import React, { useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ComponentProps } from '../ComponentRegistry'
+import { ComponentProps, ComponentRenderer } from '../ComponentRegistry'
 import { parsePartialJson } from '../../../utils/partialJsonParser'
-import {
-  PlannerResponse,
-  VerifierResponse,
-  Todo,
-} from '../../../agents/agentTypes'
-import TodoList from './TodoList'
 import { markdownComponents } from '../MarkdownComponents'
-
-type ResponseType = 'planner' | 'verifier'
 
 // 字段渲染配置类型
 type FieldRenderConfig =
@@ -19,41 +11,47 @@ type FieldRenderConfig =
       type: 'component'
       component: string
       data: any
-      props?: Record<string, any>
+      props?: Record<string, any> | ((data: any) => Record<string, any>)
     }
   | { type: 'markdown'; data: string }
 
 interface StreamJsonDisplayConfig {
-  responseType: ResponseType
   containerClassName?: string
   // 字段映射配置：将响应数据字段映射到渲染配置
   fieldMapping?: Record<string, FieldRenderConfig>
   // 自定义字段提取函数
-  extractFields?: (
-    data: Partial<PlannerResponse | VerifierResponse>,
-  ) => Record<string, any>
-  renderExtraContent?: (
-    data: Partial<PlannerResponse | VerifierResponse>,
-    isValid: boolean,
-  ) => React.ReactNode
-  plannerTodos?: Todo[] // Planner 的原始 todos，用于 verifier 匹配任务说明
+  extractFields?: (data: Record<string, any>) => Record<string, any>
+  // 自定义 JSON 解析函数（可选，默认使用通用解析）
+  parseJson?: (content: string) => { data: Record<string, any>; isValid: boolean }
+  // 自定义空数据处理：当没有有效数据时的渲染逻辑
+  renderEmptyContent?: (content: string, hasJsonStructure: boolean) => React.ReactNode
+  // 额外的内容渲染
+  renderExtraContent?: (data: Record<string, any>, isValid: boolean) => React.ReactNode
 }
 
 interface StreamJsonDisplayProps {
   props: ComponentProps & { config?: StreamJsonDisplayConfig }
 }
 
-// 组件分发器
-const ComponentRenderer: React.FC<{
+// 字段组件分发器（用于字段级别的组件渲染）
+// 使用统一的 ComponentRenderer，通过注册表管理组件
+const FieldComponentRenderer: React.FC<{
   component: string
   data: any
   props?: Record<string, any>
 }> = ({ component, data, props = {} }) => {
-  if (component === 'TodoList') {
-    return <TodoList todos={data} {...props} />
+  // 将 component 名称映射到注册表中的名称
+  const componentNameMap: Record<string, string> = {
+    TodoList: 'todo-list',
   }
-  // 可以在这里添加更多组件分发逻辑
-  return null
+  const registeredName = componentNameMap[component] || component.toLowerCase()
+  
+  return (
+    <ComponentRenderer
+      component={registeredName}
+      props={{ ...props, todos: data }}
+    />
+  )
 }
 
 const StreamJsonDisplay: React.FC<StreamJsonDisplayProps> = ({ props }) => {
@@ -71,43 +69,40 @@ const StreamJsonDisplay: React.FC<StreamJsonDisplayProps> = ({ props }) => {
   }
 
   const {
-    responseType,
     containerClassName,
     fieldMapping,
     extractFields,
+    parseJson,
+    renderEmptyContent,
     renderExtraContent,
-    plannerTodos,
   } = config
 
   // 始终尝试解析 JSON，即使不完整
   const parsed = useMemo(() => {
-    // 尝试提取 JSON 部分
+    // 如果提供了自定义解析函数，使用它
+    if (parseJson) {
+      return parseJson(content)
+    }
+
+    // 默认通用 JSON 解析
     const jsonMatch = content.match(/\{[\s\S]*\}/)
     if (!jsonMatch) {
-      // 如果没有找到 JSON 结构，返回一个空结果
       return {
-        data: {} as Partial<PlannerResponse | VerifierResponse>,
+        data: {} as Record<string, any>,
         isValid: false,
-        raw: content,
       }
     }
 
     try {
-      if (responseType === 'planner') {
-        return parsePartialJson<PlannerResponse>(jsonMatch[0])
-      } else {
-        return parsePartialJson<VerifierResponse>(jsonMatch[0])
-      }
+      return parsePartialJson<Record<string, any>>(jsonMatch[0])
     } catch (error) {
-      // JSON 解析完全失败，返回空结果
       console.warn('JSON 解析失败:', error)
       return {
-        data: {} as Partial<PlannerResponse | VerifierResponse>,
+        data: {} as Record<string, any>,
         isValid: false,
-        raw: content,
       }
     }
-  }, [content, responseType])
+  }, [content, parseJson])
 
   const { data, isValid } = parsed
 
@@ -122,44 +117,16 @@ const StreamJsonDisplay: React.FC<StreamJsonDisplayProps> = ({ props }) => {
       return extractFields(data)
     }
 
-    // 默认字段提取逻辑
-    if (responseType === 'planner') {
-      const plannerData = data as Partial<PlannerResponse>
-      return {
-        summary: plannerData.summary,
-        todos: plannerData.todos || [],
-        needsMorePlanning: plannerData.needsMorePlanning,
+    // 默认通用字段提取：直接返回所有字段（排除 type 和 component）
+    const result: Record<string, any> = {}
+    Object.entries(data).forEach(([key, value]) => {
+      // 跳过 type 和 component 字段（这些是元数据）
+      if (key !== 'type' && key !== 'component') {
+        result[key] = value
       }
-    } else {
-      const verifierData = data as Partial<VerifierResponse>
-      // 转换 verifier tasks 为 todos
-      let todos: Todo[] = []
-      if (verifierData.tasks && Array.isArray(verifierData.tasks)) {
-        todos = verifierData.tasks.map((task) => {
-          const status: Todo['status'] = task.completed ? 'completed' : 'failed'
-          let description = task.id || '任务'
-          if (plannerTodos && Array.isArray(plannerTodos)) {
-            const plannerTodo = plannerTodos.find((t) => t.id === task.id)
-            if (plannerTodo && plannerTodo.description) {
-              description = plannerTodo.description
-            }
-          }
-          return {
-            id: task.id,
-            description,
-            status,
-            result: task.feedback || undefined,
-            priority: 0,
-          }
-        })
-      }
-      return {
-        overallFeedback: verifierData.overallFeedback,
-        todos,
-        allCompleted: verifierData.allCompleted,
-      }
-    }
-  }, [data, responseType, plannerTodos, extractFields])
+    })
+    return result
+  }, [data, extractFields])
 
   // 检查是否有任何有效的数据字段
   const hasData = useMemo(() => {
@@ -171,38 +138,57 @@ const StreamJsonDisplay: React.FC<StreamJsonDisplayProps> = ({ props }) => {
     })
   }, [extractedFields])
 
-  // 如果没有有效数据，不显示任何内容（包括原始 JSON）
-  // 只有在以下情况才显示：
-  // 1. 有有效数据（hasData === true）
-  // 2. 或者内容不是 JSON 格式且是 planner 类型（可能是纯文本总结）
+  // 如果没有有效数据，使用自定义的空内容渲染或返回 null
   if (!hasData) {
-    // 如果内容不是 JSON 格式，且是 planner 类型，可能是纯文本总结，使用 markdown 渲染
-    if (!hasJsonStructure && responseType === 'planner' && content.trim().length > 0) {
+    if (renderEmptyContent) {
       return (
-        <div
-          className={`stream-json-display ${
-            containerClassName || ''
-          }`}
-        >
-          <div className="summary-section prose prose-sm max-w-none text-base-content">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={markdownComponents}
-            >
-              {content}
-            </ReactMarkdown>
-          </div>
+        <div className={`stream-json-display ${containerClassName || ''}`}>
+          {renderEmptyContent(content, hasJsonStructure)}
         </div>
       )
     }
-    // 其他情况（包括 JSON 解析失败但没有有效数据）不显示内容
+    // 默认：如果没有有效数据，不显示任何内容
     return null
   }
 
   // 自动生成字段映射配置
   const defaultFieldMapping = useMemo<Record<string, FieldRenderConfig>>(() => {
+    // 如果提供了自定义 fieldMapping，需要从 extractedFields 中填充 data
     if (fieldMapping) {
-      return fieldMapping
+      const mergedMapping: Record<string, FieldRenderConfig> = {}
+      Object.entries(fieldMapping).forEach(([fieldName, config]) => {
+        // 如果配置中没有 data，从 extractedFields 中获取
+        if (config.type === 'component') {
+          const fieldValue = extractedFields[fieldName]
+          mergedMapping[fieldName] = {
+            type: 'component',
+            component: config.component,
+            data: fieldValue,
+            props: config.props,
+          }
+        } else {
+          mergedMapping[fieldName] = config
+        }
+      })
+      // 同时处理 extractedFields 中其他未在 fieldMapping 中定义的字段
+      Object.entries(extractedFields).forEach(([fieldName, fieldValue]) => {
+        if (!mergedMapping[fieldName] && fieldValue !== undefined && fieldValue !== null) {
+          // 自动生成映射
+          if (fieldName === 'todos' && Array.isArray(fieldValue) && fieldValue.length > 0) {
+            mergedMapping[fieldName] = {
+              type: 'component',
+              component: 'TodoList',
+              data: fieldValue,
+            }
+          } else if (typeof fieldValue === 'string' && fieldValue.trim().length > 0) {
+            mergedMapping[fieldName] = {
+              type: 'markdown',
+              data: fieldValue,
+            }
+          }
+        }
+      })
+      return mergedMapping
     }
 
     // 自动从 extractedFields 中生成映射
@@ -220,10 +206,7 @@ const StreamJsonDisplay: React.FC<StreamJsonDisplayProps> = ({ props }) => {
         mapping[fieldName] = {
           type: 'component',
           component: 'TodoList',
-          data: fieldValue as Todo[],
-          props: responseType === 'verifier' 
-            ? { title: `任务验证结果 (${fieldValue.length})` }
-            : undefined,
+          data: fieldValue,
         }
         return
       }
@@ -241,7 +224,7 @@ const StreamJsonDisplay: React.FC<StreamJsonDisplayProps> = ({ props }) => {
     })
 
     return mapping
-  }, [fieldMapping, responseType, extractedFields])
+  }, [fieldMapping, extractedFields])
 
   // 渲染字段
   const renderField = (
@@ -254,12 +237,16 @@ const StreamJsonDisplay: React.FC<StreamJsonDisplayProps> = ({ props }) => {
         if (!config.data || (Array.isArray(config.data) && config.data.length === 0)) {
           return null
         }
+        // 如果 props 是函数，调用它来生成 props
+        const componentProps = typeof config.props === 'function' 
+          ? config.props(config.data)
+          : config.props
         return (
-          <ComponentRenderer
+          <FieldComponentRenderer
             key={fieldName}
             component={config.component}
             data={config.data}
-            props={config.props}
+            props={componentProps}
           />
         )
       case 'markdown':

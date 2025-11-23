@@ -9,7 +9,7 @@ import { formatDateTime } from '../../utils/format'
 import { ReasoningSection } from './ReasoningSection'
 import { ToolCallsSection } from './ToolCallsSection'
 import { ToolCallDetailModal } from './ToolCallDetailModal'
-import { AgentType, PlannerResponse, Todo, AgentAction } from '../../agents/agentTypes'
+import { PlannerResponse, Todo, AgentAction } from '../../agents/agentTypes'
 import { ComponentRenderer } from './ComponentRegistry'
 import { parsePartialJson } from '../../utils/partialJsonParser'
 import { AgentActionLabel } from './AgentActionLabel'
@@ -70,7 +70,10 @@ const inferMessageAction = (message: AIMessage): AgentAction | undefined => {
 
   if (message.agentType === 'planner') {
     // 检查是否是总结消息（通过消息 ID 或内容判断）
-    if (message.id === 'planner-summary-msg' || !message.content.match(/\{[\s\S]*"todos"/)) {
+    if (
+      message.id === 'planner-summary-msg' ||
+      !message.content.match(/\{[\s\S]*"todos"/)
+    ) {
       return 'summarizing'
     }
     return 'planning'
@@ -116,29 +119,41 @@ const findPlannerTodos = (messages: AIMessage[] = []): Todo[] => {
 const renderMessageContent = (
   content: string,
   showCursor?: boolean,
-  agentType?: AgentType,
   messages?: AIMessage[],
 ) => {
-  // 对于 planner 和 verifier，使用组件方式显示
-  if (agentType === 'planner' || agentType === 'verifier') {
-    const componentName =
-      agentType === 'planner' ? 'planner-response' : 'verifier-response'
+  // 检查 JSON 中是否有 type: "component" 和 component 属性
+  const jsonMatch = content.match(/\{[\s\S]*\}/)
+  console.log('content------------>', content, jsonMatch)
+  if (jsonMatch) {
+    try {
+      const parsed = parsePartialJson<{ type?: string; component?: string }>(
+        jsonMatch[0],
+      )
+      if (parsed?.data?.type === 'component' && parsed.data.component) {
+        // 直接使用组件名称（JSON 中应使用注册表中的名称）
+        const component = parsed.data.component
 
-    // 对于 verifier，查找 planner 的 todos 并传递
-    const props: any = { content }
-    if (agentType === 'verifier' && messages) {
-      const plannerTodos = findPlannerTodos(messages)
-      if (plannerTodos.length > 0) {
-        props.config = { plannerTodos }
+        // 准备组件 props
+        const props: any = { content }
+
+        // Verifier 需要 planner 的 todos
+        if (component === 'verifier-response' && messages) {
+          const plannerTodos = findPlannerTodos(messages)
+          if (plannerTodos.length > 0) {
+            props.config = { plannerTodos }
+          }
+        }
+
+        return (
+          <div className="text-sm prose prose-sm max-w-none text-base-content break-words">
+            <ComponentRenderer component={component} props={props} />
+            {showCursor && <span className="ai-cursor" />}
+          </div>
+        )
       }
+    } catch (error) {
+      console.warn('解析 JSON 失败:', error)
     }
-
-    return (
-      <div className="text-sm prose prose-sm max-w-none text-base-content break-words">
-        <ComponentRenderer componentName={componentName} props={props} />
-        {showCursor && <span className="ai-cursor" />}
-      </div>
-    )
   }
 
   return (
@@ -181,11 +196,11 @@ export const MessageItem: React.FC<MessageItemProps> = ({
 
   // 推断消息的行为类型
   const messageAction = inferMessageAction(message)
-  
+
   // 判断行为是否正在进行中
-  const isActionActive = 
-    message.role === 'assistant' && 
-    isLastAssistantMessage && 
+  const isActionActive =
+    message.role === 'assistant' &&
+    isLastAssistantMessage &&
     isStreaming &&
     !!messageAction
 
@@ -218,12 +233,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
               </div>
             </div>
           ) : (
-            renderMessageContent(
-              message.content,
-              shouldShowCursor,
-              message.role === 'assistant' ? message.agentType : undefined,
-              messages,
-            )
+            renderMessageContent(message.content, shouldShowCursor, messages)
           ))}
         {/* 如果没有内容但正在流式输出，也显示光标 */}
         {!message.content && shouldShowCursor && (
@@ -263,7 +273,10 @@ export const MessageItem: React.FC<MessageItemProps> = ({
         {/* 行为标签和时间戳放在同一行 */}
         <div className="flex items-center gap-2 mt-2">
           {message.role === 'assistant' && messageAction && (
-            <AgentActionLabel action={messageAction} isActive={!!isActionActive} />
+            <AgentActionLabel
+              action={messageAction}
+              isActive={!!isActionActive}
+            />
           )}
           {renderTimestamp(message.timestamp)}
         </div>

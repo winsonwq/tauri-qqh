@@ -40,6 +40,8 @@
 
 ```json
 {
+  "type": "component",
+  "component": "verifier-response",
   "allCompleted": true,
   "tasks": [
     {

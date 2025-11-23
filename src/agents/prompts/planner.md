@@ -37,6 +37,8 @@
 
 ```json
 {
+  "type": "component",
+  "component": "planner-response",
   "needsMorePlanning": false,
   "todos": [
     {

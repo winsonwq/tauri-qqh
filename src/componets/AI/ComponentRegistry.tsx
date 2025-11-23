@@ -41,17 +41,17 @@ export const componentRegistry = new ComponentRegistry()
 
 // 渲染 Component 的 React 组件
 interface ComponentRendererProps {
-  componentName: string
+  component: string
   props: ComponentProps
 }
 
-export const ComponentRenderer: React.FC<ComponentRendererProps> = ({ componentName, props }) => {
-  const Component = componentRegistry.get(componentName)
+export const ComponentRenderer: React.FC<ComponentRendererProps> = ({ component, props }) => {
+  const Component = componentRegistry.get(component)
   
   if (!Component) {
     return (
       <div className="text-sm text-warning p-2 bg-warning/10 rounded border border-warning/20">
-        未找到组件: {componentName}
+        未找到组件: {component}
       </div>
     )
   }

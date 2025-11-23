@@ -5,7 +5,7 @@ import './ComponentInit' // 确保组件已注册
 export interface ToolResultContentItem {
   type: 'text' | 'json' | 'webcomponent' | 'component'
   value?: string // 对于 webcomponent 类型，value 是 HTML 字符串；对于 component 类型，value 可能为空
-  componentName?: string // component 组件名
+  component?: string // component 组件名
   props?: Record<string, any> // component 属性
 }
 
@@ -81,11 +81,11 @@ const ToolResultDisplay: React.FC<ToolResultDisplayProps> = ({ items }) => {
 
       case 'component':
         // 对于 component，使用 ComponentRenderer 渲染 React 组件
-        if (item.componentName && item.props) {
+        if (item.component && item.props) {
           return (
             <div key={index} className="text-sm text-base-content">
               <ComponentRenderer
-                componentName={item.componentName}
+                component={item.component}
                 props={item.props}
               />
             </div>
@@ -134,11 +134,11 @@ export function parseToolResultContent(
       return parsed.content.map((item: any) => {
         const type = (item.type || 'text') as string
 
-        // 如果是 component 类型，解析 componentName 和 props
+        // 如果是 component 类型，解析 component 和 props
         if (type === 'component') {
           return {
             type: 'component' as const,
-            componentName: item.componentName || item.tagName, // 兼容 tagName
+            component: item.component || item.tagName, // 使用 component，兼容 tagName
             props: item.props || item.attributes || {}, // 兼容 attributes
             value: item.value || item.text || '', // 保留 value 以兼容旧格式
           }
@@ -168,7 +168,7 @@ export function parseToolResultContent(
         if (type === 'component') {
           return {
             type: 'component' as const,
-            componentName: item.componentName || item.tagName,
+            component: item.component || item.tagName, // 使用 component，兼容 tagName
             props: item.props || item.attributes || {},
             value: item.value || item.text || '',
           }
