@@ -41,7 +41,7 @@ pub fn get_default_tools() -> Vec<MCPTool> {
         },
         MCPTool {
             name: "get_resource_info".to_string(),
-            description: Some("获取转写资源信息。如果不提供 resource_id，将使用当前上下文中的资源ID".to_string()),
+            description: Some("获取转写资源信息，包括资源的基本信息和 latest_completed_task_id（最新完成的转写任务ID）。如果不提供 resource_id，将使用当前上下文中的资源ID。注意：此工具只返回资源信息和任务ID，不返回转写结果内容。要获取转写结果内容，需要使用返回的 latest_completed_task_id 调用 get_task_info 工具".to_string()),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -55,13 +55,13 @@ pub fn get_default_tools() -> Vec<MCPTool> {
         },
         MCPTool {
             name: "get_task_info".to_string(),
-            description: Some("获取转写任务（记录）信息。如果不提供 task_id，将使用当前上下文中的任务ID".to_string()),
+            description: Some("获取转写任务（记录）信息，包括转写结果内容。如果任务已完成，会自动读取并返回转写结果文件的内容（transcription_content字段）。如果不提供 task_id，将使用当前上下文中的任务ID。注意：要获取转写结果内容，必须调用此工具，仅调用 get_resource_info 无法获取转写结果".to_string()),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "task_id": {
                         "type": "string",
-                        "description": "任务ID（可选，如果不提供则使用当前上下文）"
+                        "description": "任务ID（可选，如果不提供则使用当前上下文）。如果任务要求获取转写结果，应该使用资源的 latest_completed_task_id 或当前上下文的 task_id"
                     }
                 },
                 "required": []
@@ -374,49 +374,8 @@ async fn handle_get_resource_info(
     .await
     .map_err(|e| format!("数据库操作失败: {}", e))??;
     
-    // 获取最新转写任务的内容（如果存在）
-    let latest_transcription_content: Option<String> = if let Some(ref latest_task_id) = resource.latest_completed_task_id {
-        // 尝试读取转写结果内容
-        let task_id = latest_task_id.clone();
-        let db_path_clone = db_path.clone();
-        match tokio::task::spawn_blocking(move || -> Result<Option<String>, String> {
-            let conn = db::init_database(&db_path_clone)
-                .map_err(|e| format!("无法初始化数据库: {}", e))?;
-            let task = db::get_task(&conn, &task_id)
-                .map_err(|e| format!("无法查询任务: {}", e))?;
-            
-            if let Some(task) = task {
-                if task.status == "completed" {
-                    if let Some(result_path) = task.result {
-                        let result_file = std::path::PathBuf::from(&result_path);
-                        if result_file.exists() {
-                            let content = std::fs::read_to_string(&result_file)
-                                .map_err(|e| format!("无法读取结果文件: {}", e))?;
-                            Ok(Some(content))
-                        } else {
-                            Ok(None)
-                        }
-                    } else {
-                        Ok(None)
-                    }
-                } else {
-                    Ok(None)
-                }
-            } else {
-                Ok(None)
-            }
-        })
-        .await {
-            Ok(Ok(content)) => content,
-            Ok(Err(_)) => None, // 如果读取失败，不返回错误，只是不包含内容
-            Err(_) => None, // 如果任务执行失败，不包含内容
-        }
-    } else {
-        None
-    };
-    
     // 构建资源信息（作为 component 属性）
-    let mut resource_info = json!({
+    let resource_info = json!({
         "id": resource.id,
         "name": resource.name,
         "file_path": resource.file_path,
@@ -430,16 +389,6 @@ async fn handle_get_resource_info(
         "updated_at": resource.updated_at,
         "task_count": task_count,
     });
-    
-    // 如果存在转写内容，添加到资源信息中
-    if let Some(content) = latest_transcription_content {
-        resource_info["latest_transcription_content"] = json!(content);
-    }
-    
-    // 添加提示信息，说明如果存在转写内容，应该进行分析
-    if resource_info.get("latest_transcription_content").is_some() {
-        resource_info["has_transcription_content"] = json!(true);
-    }
     
     // 返回 component 格式，指定组件名为 resource-info
     Ok(json!({

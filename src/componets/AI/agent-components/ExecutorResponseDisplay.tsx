@@ -30,7 +30,7 @@ const ExecutorResponseDisplay: React.FC<ExecutorResponseDisplayProps> = ({
     }
   }, [content])
 
-  const { data } = parsed
+  const { data, isValid } = parsed
 
   // 检查是否有 JSON 结构（通过检查内容是否包含 JSON 特征来判断）
   const hasJsonStructure = content.trim().match(/\{[\s\S]*\}/) !== null
@@ -51,21 +51,30 @@ const ExecutorResponseDisplay: React.FC<ExecutorResponseDisplayProps> = ({
     )
   }
 
-  // 如果有 JSON 结构但没有有效数据，不显示（除非正在流式传输）
-  if (!data || Object.keys(data).length === 0) {
-    return null
-  }
-
-  const { summary, todos } = data
+  // 提取数据字段，使用安全的默认值
+  const summary = data?.summary
+  const todos = data?.todos
 
   // 检查是否有有效数据，确保 summary 是字符串类型
   const summaryText = typeof summary === 'string' ? summary : String(summary || '')
+  const todosArray = Array.isArray(todos) ? todos : []
+  
+  // 检查是否有有效数据
   const hasData =
     (summaryText.trim().length > 0) ||
-    (Array.isArray(todos) && todos.length > 0)
+    (todosArray.length > 0)
 
-  if (!hasData) {
-    return null
+  // 如果有 JSON 结构但没有有效数据
+  if (hasJsonStructure && !hasData) {
+    // 如果 JSON 已完整解析但没有数据，不显示（可能是格式错误）
+    if (isValid) {
+      return null
+    }
+    // 如果 JSON 不完整且没有数据，可能是流式传输中，不显示（等待更多内容）
+    if (!data || Object.keys(data).length === 0) {
+      return null
+    }
+    // 如果 JSON 不完整但有部分数据，继续显示（流式传输中）
   }
 
   return (
@@ -83,8 +92,8 @@ const ExecutorResponseDisplay: React.FC<ExecutorResponseDisplayProps> = ({
       )}
 
       {/* 渲染 todos */}
-      {Array.isArray(todos) && todos.length > 0 && (
-        <TodoList todos={todos} />
+      {todosArray.length > 0 && (
+        <TodoList todos={todosArray} />
       )}
     </div>
   )

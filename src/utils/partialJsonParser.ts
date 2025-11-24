@@ -14,12 +14,25 @@ export interface PartialJsonResult<T> {
 
 /**
  * 清理 markdown 代码块标记
+ * 支持从文本中提取 JSON 代码块，即使代码块前有其他文字
  * 去除开头的 ```json 或 ``` 和末尾的 ```
  */
 function cleanMarkdownCodeBlock(jsonString: string): string {
   let cleaned = jsonString.trim()
-  cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, '')
-  cleaned = cleaned.replace(/\n?```\s*$/, '')
+  
+  // 尝试匹配 JSON 代码块（```json ... ``` 或 ``` ... ```）
+  // 匹配从第一个 ```json 或 ``` 开始，到匹配的结束 ``` 为止
+  // 使用 [\s\S] 匹配包括换行符在内的所有字符，非贪婪匹配确保匹配到第一个结束标记
+  const jsonCodeBlockMatch = cleaned.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+  
+  if (jsonCodeBlockMatch && jsonCodeBlockMatch[1]) {
+    // 如果找到了代码块，提取其中的内容
+    cleaned = jsonCodeBlockMatch[1].trim()
+  } else {
+    // 如果没有找到完整的代码块，尝试去除开头和结尾的标记（兼容旧格式）
+    cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, '')
+    cleaned = cleaned.replace(/\n?```\s*$/, '')
+  }
 
   return cleaned.trim()
 }

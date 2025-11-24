@@ -23,7 +23,7 @@ export const ToolCallsSection: React.FC<ToolCallsSectionProps> = ({
   const labelText = variant === 'pending' ? '工具调用' : '工具调用'
 
   return (
-    <div className={`mt-3 p-3 ${bgColor} rounded-lg border ${borderColor}`}>
+    <div className={`p-3 ${bgColor} rounded-lg border ${borderColor}`}>
       <div className="space-y-1">
         {toolCalls.map((toolCall, index) => {
           return (
