@@ -39,6 +39,10 @@ export function useStreamResponse() {
       let finalContent = ''
       let finalReasoning = ''
       let finalToolCalls: ToolCall[] | undefined = undefined
+      let pendingDefaultToolCalls: ToolCall[] | undefined = undefined // 待执行的默认工具调用
+      
+      // 保存 executeToolCallsAndContinue 到局部变量，确保在闭包中可以访问
+      const executeToolCalls = executeToolCallsAndContinue
 
       // 监听流式事件
       const eventName = `ai-chat-stream-${eventId}`
@@ -69,7 +73,9 @@ export function useStreamResponse() {
           const allDefault = areAllDefaultMCPTools(payload.tool_calls, mcpServers)
 
           if (allDefault) {
-            // 默认 MCP 工具直接执行，不显示确认界面
+            // 默认 MCP 工具：先保存工具调用，但不立即执行
+            // 等待流式响应完成（收到 done 事件）后再执行
+            pendingDefaultToolCalls = payload.tool_calls
             updateMessages((prev) =>
               prev.map((msg) =>
                 msg.id === assistantMessageId
@@ -77,11 +83,7 @@ export function useStreamResponse() {
                   : msg
               )
             )
-            // 直接执行工具调用
-            executeToolCallsAndContinue(payload.tool_calls).catch((err) => {
-              console.error('执行默认 MCP 工具调用失败:', err)
-              message.error(`工具调用失败: ${err}`)
-            })
+            console.log('[AI Frontend] 收到默认工具调用，等待流式响应完成后再执行')
           } else {
             // 非默认 MCP 工具需要用户确认
             updateMessages((prev) =>
@@ -137,6 +139,18 @@ export function useStreamResponse() {
             }).catch((err) => {
               console.error('保存助手消息失败:', err)
             })
+          }
+
+          // 流式响应完成后，如果有待执行的默认工具调用，现在执行
+          if (pendingDefaultToolCalls && payload.type !== 'stopped' && executeToolCalls) {
+            console.log('[AI Frontend] 流式响应完成，开始执行默认工具调用')
+            // 使用 setTimeout 确保状态更新完成后再执行工具调用
+            setTimeout(() => {
+              executeToolCalls(pendingDefaultToolCalls!).catch((err) => {
+                console.error('执行默认 MCP 工具调用失败:', err)
+                message.error(`工具调用失败: ${err}`)
+              })
+            }, 0)
           }
         }
       })

@@ -16,7 +16,6 @@ const ExecutorResponseDisplay: React.FC<ExecutorResponseDisplayProps> = ({
 }) => {
   const { content } = props
 
-
   // 解析 JSON
   const parsed = useMemo(() => {
     try {
@@ -41,16 +40,6 @@ const ExecutorResponseDisplay: React.FC<ExecutorResponseDisplayProps> = ({
   const summaryText = typeof summary === 'string' ? summary : String(summary || '')
   const todosArray = Array.isArray(todos) ? todos : []
   
-  // 检查是否有有效数据
-  const hasData =
-    (summaryText.trim().length > 0) ||
-    (todosArray.length > 0)
-
-  // 如果没有有效数据，不显示
-  if (!hasData) {
-    return null
-  }
-
   return (
     <div className="executor-response stream-json-display space-y-4">
       {/* 渲染 summary */}

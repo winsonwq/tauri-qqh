@@ -49,11 +49,26 @@ const VerifierResponseDisplay: React.FC<VerifierResponseDisplayProps> = ({
           description = plannerTodo.description
         }
       }
+      // 安全地处理 task.feedback：如果是对象，转换为 JSON 字符串；如果是字符串，直接使用
+      let result: string | undefined = undefined
+      if (task.feedback) {
+        if (typeof task.feedback === 'string') {
+          result = task.feedback
+        } else if (typeof task.feedback === 'object') {
+          try {
+            result = JSON.stringify(task.feedback, null, 2)
+          } catch {
+            result = String(task.feedback)
+          }
+        } else {
+          result = String(task.feedback)
+        }
+      }
       return {
         id: task.id,
         description,
         status,
-        result: task.feedback || undefined,
+        result,
         priority: 0,
       }
     })
@@ -61,7 +76,23 @@ const VerifierResponseDisplay: React.FC<VerifierResponseDisplayProps> = ({
 
   // 检查是否有有效数据
   const overallFeedback = data?.overallFeedback
-  const overallFeedbackText = typeof overallFeedback === 'string' ? overallFeedback : String(overallFeedback || '')
+  // 安全地处理 overallFeedback：如果是对象，转换为 JSON 字符串；如果是字符串，直接使用
+  const overallFeedbackText = useMemo(() => {
+    if (!overallFeedback) return ''
+    if (typeof overallFeedback === 'string') {
+      return overallFeedback
+    }
+    if (typeof overallFeedback === 'object') {
+      // 如果是对象，尝试转换为 JSON 字符串
+      try {
+        return JSON.stringify(overallFeedback, null, 2)
+      } catch {
+        return String(overallFeedback)
+      }
+    }
+    return String(overallFeedback)
+  }, [overallFeedback])
+  
   const hasData =
     (overallFeedbackText.trim().length > 0) ||
     todos.length > 0 ||
@@ -87,7 +118,11 @@ const VerifierResponseDisplay: React.FC<VerifierResponseDisplayProps> = ({
       )}
 
       {todos.length > 0 && (
-        <TodoList todos={todos} title={`任务验证结果 (${todos.length})`} />
+        <TodoList 
+          todos={todos} 
+          title={`任务验证结果 (${todos.length})`}
+          collapseCompleted={false}
+        />
       )}
     </div>
   )

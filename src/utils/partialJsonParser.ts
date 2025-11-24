@@ -13,6 +13,48 @@ export interface PartialJsonResult<T> {
 }
 
 /**
+ * 从混合内容中提取 JSON 对象
+ * 支持从包含普通文本和 JSON 的混合内容中提取最后一个完整的 JSON 对象
+ */
+function extractJsonFromMixedContent(content: string): string {
+  // 首先尝试提取 markdown 代码块中的 JSON
+  const jsonCodeBlockMatch = content.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+  if (jsonCodeBlockMatch && jsonCodeBlockMatch[1]) {
+    return jsonCodeBlockMatch[1].trim()
+  }
+
+  // 如果没有代码块，尝试从内容中提取最后一个 JSON 对象
+  // 使用正则表达式匹配 JSON 对象（从 { 开始，到匹配的 } 结束）
+  const jsonMatches = []
+  let depth = 0
+  let startIndex = -1
+  
+  for (let i = 0; i < content.length; i++) {
+    if (content[i] === '{') {
+      if (depth === 0) {
+        startIndex = i
+      }
+      depth++
+    } else if (content[i] === '}') {
+      depth--
+      if (depth === 0 && startIndex !== -1) {
+        // 找到一个完整的 JSON 对象
+        jsonMatches.push(content.substring(startIndex, i + 1))
+        startIndex = -1
+      }
+    }
+  }
+  
+  // 返回最后一个匹配的 JSON 对象（通常是最完整的）
+  if (jsonMatches.length > 0) {
+    return jsonMatches[jsonMatches.length - 1]
+  }
+  
+  // 如果没有找到完整的 JSON 对象，返回原始内容
+  return content
+}
+
+/**
  * 清理 markdown 代码块标记
  * 支持从文本中提取 JSON 代码块，处理重复的代码块标记（如 ``` ```json）
  * 去除开头的 ```json 或 ``` 和末尾的 ```
@@ -54,8 +96,11 @@ export function parsePartialJson<T extends Record<string, any>>(
   jsonString: string,
 ): PartialJsonResult<T> {
   try {
-    // 先清理 markdown 代码块
-    const cleaned = cleanMarkdownCodeBlock(jsonString)
+    // 先从混合内容中提取 JSON（如果内容包含普通文本和 JSON）
+    let extractedJson = extractJsonFromMixedContent(jsonString)
+    
+    // 然后清理 markdown 代码块
+    const cleaned = cleanMarkdownCodeBlock(extractedJson)
     
     // 如果清理后为空，返回空结果
     if (!cleaned.trim()) {
@@ -98,7 +143,8 @@ export function parsePartialJson<T extends Record<string, any>>(
   } catch (error) {
     // 即使出错，也尝试返回部分数据
     try {
-      const cleaned = cleanMarkdownCodeBlock(jsonString)
+      const extractedJson = extractJsonFromMixedContent(jsonString)
+      const cleaned = cleanMarkdownCodeBlock(extractedJson)
       const parsed = partialParse(cleaned) as Partial<T>
       return {
         data: parsed,

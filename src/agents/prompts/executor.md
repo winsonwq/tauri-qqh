@@ -157,10 +157,23 @@
   "summary": "任务执行总结，说明执行过程和结果",
   "todos": [
     {
-      "id": "task-id",
-      "description": "任务描述",
+      "id": "task-id-1",
+      "description": "已完成的任务描述",
       "priority": 1,
       "status": "completed"
+    },
+    {
+      "id": "task-id-2",
+      "description": "当前正在执行的任务描述",
+      "priority": 2,
+      "status": "executing",
+      "isCurrent": true
+    },
+    {
+      "id": "task-id-3",
+      "description": "待执行的任务描述",
+      "priority": 3,
+      "status": "pending"
     }
   ]
 }
@@ -208,6 +221,10 @@
   - `description`：任务描述（与规划时一致）
   - `priority`：优先级（与规划时一致）
   - `status`：任务状态
+  - `isCurrent`：**可选**，标记当前正在处理的任务
+    - 如果当前正在执行某个任务（`status: "executing"`），应设置 `isCurrent: true`
+    - 只有**一个**任务应该被标记为 `isCurrent: true`，通常是当前正在执行的任务
+    - 如果任务已完成或未开始，不需要设置此字段或设置为 `false`
 
   **注意**：如果任务执行过程中生成了新的子任务，也应该包含在 `todos` 数组中。
 

@@ -38,6 +38,7 @@ export interface Todo {
   priority: number
   status: 'pending' | 'executing' | 'completed' | 'failed'
   result?: string
+  isCurrent?: boolean  // 标记当前正在处理的任务
 }
 
 export interface PlannerResponse {

@@ -41,7 +41,7 @@ const getMessageContainerClasses = (
 
 // 获取消息内容区域样式
 const getMessageContentClasses = (role: 'user' | 'assistant' | 'tool') => {
-  const baseClasses = 'px-4 py-3'
+  const baseClasses = 'px-4 py-3 space-y-2'
   return role === 'user'
     ? `${baseClasses} bg-base-200 border rounded-lg border-base-300`
     : `${baseClasses} bg-base-100`
@@ -176,10 +176,33 @@ const renderMessageContent = (
   }
 
   // 如果没有 component 类型，但有 JSON 结构，可能是 JSON 不完整
-  // 这种情况下，不显示原始 JSON，而是等待更多内容
+  // 如果组件返回 null，尝试显示原始内容（至少显示部分内容）
   if (hasJsonStructure && !parsed?.isValid) {
-    // JSON 不完整，但不显示原始内容，等待组件解析
+    // JSON 不完整，但尝试从 JSON 中提取部分内容显示
+    // 如果 parsed.data 有内容，尝试使用组件渲染
+    // 否则，如果正在流式输出，不显示（等待更多内容）
+    // 如果不在流式输出，显示原始内容
+    if (!showCursor && parsed?.data && Object.keys(parsed.data).length > 0) {
+      // 有部分数据，尝试使用组件渲染
+      // 这里会由 ComponentRendererWrapper 处理
+      return null
+    }
+    // 如果正在流式输出，等待更多内容
+    if (showCursor) {
     return null
+    }
+    // 如果不在流式输出且没有有效数据，显示原始内容
+    return (
+      <div className="text-sm prose prose-sm max-w-none text-base-content break-words">
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={markdownComponents}
+        >
+          {content}
+        </ReactMarkdown>
+        {showCursor && <span className="ai-cursor" />}
+      </div>
+    )
   }
 
   // 如果没有 JSON 结构，使用 markdown 渲染
@@ -202,13 +225,35 @@ const ComponentRendererWrapper: React.FC<{
   props: any
   hasJsonStructure: boolean
   rawContent: string
-}> = ({ component, props, hasJsonStructure }) => {
+}> = ({ component, props, hasJsonStructure, rawContent }) => {
   const rendered = <ComponentRenderer component={component} props={props} />
   
-  // 如果组件返回 null 或 undefined，但 JSON 结构存在，说明 JSON 不完整
-  // 这种情况下，不显示原始 JSON，也不显示等待提示，直接返回 null
-  // 组件会在有数据时自动显示
-  if (!rendered && hasJsonStructure) {
+  // 如果组件返回 null 或 undefined
+  if (!rendered) {
+    // 如果 JSON 结构存在但组件无法渲染，尝试显示原始内容
+    // 这样可以避免完全不显示内容的情况
+    if (hasJsonStructure) {
+      // 尝试提取 JSON 部分之前的内容作为摘要显示
+      const jsonMatch = rawContent.match(/\{[\s\S]*\}/)
+      if (jsonMatch && jsonMatch.index !== undefined && jsonMatch.index > 0) {
+        // 有 JSON 之前的内容，显示这部分内容
+        const textBeforeJson = rawContent.substring(0, jsonMatch.index).trim()
+        if (textBeforeJson.length > 0) {
+          return (
+            <div className="text-sm prose prose-sm max-w-none text-base-content break-words">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={markdownComponents}
+              >
+                {textBeforeJson}
+              </ReactMarkdown>
+            </div>
+          )
+        }
+      }
+      // 如果没有前面的内容，返回 null（等待更多内容或组件解析）
+      return null
+    }
     return null
   }
   
