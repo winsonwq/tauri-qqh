@@ -47,10 +47,11 @@ async function executeToolCallsOnly(
   for (const toolCall of toolCalls) {
     const server = findToolServer(toolCall.function.name, mcpServers)
     if (!server) {
-      console.error(`找不到工具 ${toolCall.function.name} 对应的服务器`)
+      console.error(`[Agent] 找不到工具 ${toolCall.function.name} 对应的服务器`)
       continue
     }
 
+    console.log(`[Agent] Executor 执行工具: ${toolCall.function.name}`)
     try {
       let args: any = {}
       try {
@@ -75,8 +76,9 @@ async function executeToolCallsOnly(
         tool_call_id: toolCall.id,
         name: toolCall.function.name,
       })
+      console.log(`[Agent] Executor 工具执行完成: ${toolCall.function.name}`)
     } catch (err) {
-      console.error('工具调用失败:', err)
+      console.error(`[Agent] Executor 工具执行失败: ${toolCall.function.name}`, err)
       throw err
     }
   }
@@ -335,7 +337,9 @@ export async function runAgentWorkflow({
   const verifierPrompt = await loadAgentPrompt('verifier')
 
   const tools = getAvailableTools(mcpServers)
-  console.log('[Agent Workflow] 初始化，可用工具:', tools.length, tools.map(t => t.name))
+  console.log(`[Agent] 工作流初始化，可用工具: ${tools.length} 个 (${tools.map(t => t.name).join(', ')})`)
+  console.log(`[Agent] 当前上下文 - resourceId: ${currentResourceId}, taskId: ${currentTaskId}`)
+  console.log(`[Agent] SystemMessage 包含上下文:`, systemMessage.includes('当前资源ID') || systemMessage.includes('当前任务ID'))
   let currentMessages = [...messages]
   const todos: Todo[] = []
 
@@ -346,6 +350,7 @@ export async function runAgentWorkflow({
 
   while (needsMorePlanning && planningRound < maxPlanningRounds && !isStoppedRef.current) {
     planningRound++
+    console.log(`[Agent] Planner 正在规划 (第 ${planningRound} 轮)`)
 
     // 构建 planner 消息
     const plannerMessages: AIMessage[] = [
@@ -394,14 +399,22 @@ export async function runAgentWorkflow({
         todos.push(...plannerResponse.todos)
         const newTodosCount = todos.length
         
+        console.log(`[Agent] Planner 规划完成 (第 ${planningRound} 轮): 生成 ${newTodosCount - currentTodosCount} 个新任务，总计 ${newTodosCount} 个任务`)
+        
         // 如果这次规划没有生成新任务，且 planner 还要求继续规划，则停止规划
         if (newTodosCount === currentTodosCount && plannerResponse.needsMorePlanning) {
-          console.log('[Agent Workflow] Planner 要求继续规划但没有生成新任务，停止规划循环')
+          console.log('[Agent] Planner 要求继续规划但没有生成新任务，停止规划循环')
           needsMorePlanning = false
         } else {
           needsMorePlanning = plannerResponse.needsMorePlanning
+          if (needsMorePlanning) {
+            console.log(`[Agent] Planner 需要继续规划`)
+          } else {
+            console.log(`[Agent] Planner 规划完成，共 ${newTodosCount} 个任务`)
+          }
         }
       } else {
+        console.log(`[Agent] Planner 规划完成 (第 ${planningRound} 轮): 无法解析响应`)
         needsMorePlanning = false
       }
 
@@ -441,6 +454,7 @@ export async function runAgentWorkflow({
 
   // ========== 第二层循环：Todos 执行循环 ==========
   const sortedTodos = [...todos].sort((a, b) => a.priority - b.priority)
+  console.log(`[Agent] 开始执行任务，共 ${sortedTodos.length} 个任务`)
 
   for (let i = 0; i < sortedTodos.length; i++) {
     if (isStoppedRef.current) {
@@ -449,6 +463,7 @@ export async function runAgentWorkflow({
 
     const todo = sortedTodos[i]
     todo.status = 'executing'
+    console.log(`[Agent] Executor 开始执行任务: ${todo.id} - ${todo.description} (${i + 1}/${sortedTodos.length})`)
 
     // ========== 第三层循环：Executor 工具调用循环 ==========
     let todoCompleted = false
@@ -457,6 +472,7 @@ export async function runAgentWorkflow({
 
     while (!todoCompleted && executorRound < maxExecutorRounds && !isStoppedRef.current) {
       executorRound++
+      console.log(`[Agent] Executor 正在执行任务: ${todo.id} (第 ${executorRound} 轮)`)
 
       // 构建 executor 消息
       const executorMessages: AIMessage[] = [
@@ -476,8 +492,9 @@ export async function runAgentWorkflow({
       const assistantMessageId = `executor-msg-${todo.id}-${executorRound}`
 
       // 调试：检查工具是否可用
-      console.log(`[Agent Workflow] Executor Round ${executorRound}, Todo: ${todo.id}`)
-      console.log(`[Agent Workflow] 可用工具数量: ${tools.length}`, tools.map(t => t.name))
+      if (tools.length > 0) {
+        console.log(`[Agent] Executor 可用工具: ${tools.map(t => t.name).join(', ')}`)
+      }
 
       try {
         const response = await callAIAndWait(
@@ -524,7 +541,8 @@ export async function runAgentWorkflow({
 
         // 检查是否有工具调用
         if (response.toolCalls && response.toolCalls.length > 0) {
-          console.log(`[Agent Workflow] 执行工具调用:`, response.toolCalls.map(tc => tc.function?.name))
+          const toolNames = response.toolCalls.map(tc => tc.function?.name).filter(Boolean)
+          console.log(`[Agent] Executor 正在调用工具: ${toolNames.join(', ')}`)
           // 仅执行工具调用，不继续调用 AI
           const toolResults = await executeToolCallsOnly(
             response.toolCalls,
@@ -567,6 +585,9 @@ export async function runAgentWorkflow({
           if (todoCompleted) {
             todo.status = 'completed'
             todo.result = response.content
+            console.log(`[Agent] Executor 任务完成: ${todo.id} - ${todo.description}`)
+          } else {
+            console.log(`[Agent] Executor 继续执行任务: ${todo.id} (第 ${executorRound} 轮完成，继续下一轮)`)
           }
 
           currentMessages = [
@@ -589,7 +610,7 @@ export async function runAgentWorkflow({
           ]
         }
       } catch (error) {
-        console.error('Executor 调用失败:', error)
+        console.error(`[Agent] Executor 任务执行失败: ${todo.id}`, error)
         if (isStoppedRef.current) {
           return
         }
@@ -603,10 +624,14 @@ export async function runAgentWorkflow({
     }
   }
 
+  console.log(`[Agent] 所有任务执行完成，共 ${sortedTodos.length} 个任务`)
+
   // ========== Verifier 验证 ==========
   if (isStoppedRef.current) {
     return
   }
+
+  console.log(`[Agent] Verifier 开始验证任务完成情况，共 ${todos.length} 个任务`)
 
   const todosSummary = todos
     .map((todo) => `- ${todo.id}: ${todo.description} (状态: ${todo.status}${todo.result ? `, 结果: ${todo.result.substring(0, 100)}...` : ''})`)
@@ -651,8 +676,14 @@ export async function runAgentWorkflow({
     // 解析 verifier 响应
     const verifierResponse = parseVerifierResponse(response.content)
 
+    if (verifierResponse) {
+      const completedCount = verifierResponse.tasks.filter(t => t.completed).length
+      console.log(`[Agent] Verifier 验证完成: ${completedCount}/${verifierResponse.tasks.length} 个任务已完成`)
+    }
+
     // 如果所有任务都完成，调用 planner 总结
     if (verifierResponse?.allCompleted) {
+      console.log(`[Agent] Planner 开始总结用户问题`)
       const summaryMessages: AIMessage[] = [
         ...currentMessages,
         {
@@ -700,9 +731,11 @@ export async function runAgentWorkflow({
             : msg
         )
       )
+
+      console.log(`[Agent] Planner 总结完成`)
     }
   } catch (error) {
-    console.error('Verifier 调用失败:', error)
+    console.error('[Agent] Verifier 调用失败:', error)
     if (isStoppedRef.current) {
       return
     }

@@ -15,6 +15,10 @@
   - 每个任务关联一个转写资源（resource_id）
   - 状态：pending（待处理）、running（运行中）、completed（已完成）、failed（失败）
   - 转写完成后会生成转写结果（通常是 SRT 字幕文件或 JSON 格式的转写内容）
+  - **任务 ID 获取策略**：
+    - **优先使用**：资源的 `latest_completed_task_id`（最新完成的转写任务）
+    - **备选方案**：系统上下文中保存的当前任务 ID（currentTaskId），这个 ID 会在工具调用时自动传递给后端
+    - 如果资源有 `latest_completed_task_id`，优先使用它；如果没有或需要特定任务，可以使用当前 taskid
 
 在验证任务时，如果涉及转写资源或转写任务，请确保理解这些概念，以便正确评估任务完成情况。
 

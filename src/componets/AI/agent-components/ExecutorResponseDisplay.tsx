@@ -58,9 +58,10 @@ const ExecutorResponseDisplay: React.FC<ExecutorResponseDisplayProps> = ({
 
   const { summary, todos } = data
 
-  // 检查是否有有效数据
+  // 检查是否有有效数据，确保 summary 是字符串类型
+  const summaryText = typeof summary === 'string' ? summary : String(summary || '')
   const hasData =
-    (summary && summary.trim().length > 0) ||
+    (summaryText.trim().length > 0) ||
     (Array.isArray(todos) && todos.length > 0)
 
   if (!hasData) {
@@ -70,13 +71,13 @@ const ExecutorResponseDisplay: React.FC<ExecutorResponseDisplayProps> = ({
   return (
     <div className="executor-response stream-json-display space-y-4">
       {/* 渲染 summary */}
-      {summary && summary.trim().length > 0 && (
+      {summaryText.trim().length > 0 && (
         <div className="summary-section prose prose-sm max-w-none text-base-content">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={markdownComponents}
           >
-            {summary}
+            {summaryText}
           </ReactMarkdown>
         </div>
       )}

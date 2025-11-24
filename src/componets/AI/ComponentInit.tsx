@@ -9,6 +9,7 @@ import ResourceList from './tool-components/ResourceList'
 import PlannerResponseDisplay from './agent-components/PlannerResponseDisplay'
 import VerifierResponseDisplay from './agent-components/VerifierResponseDisplay'
 import ExecutorResponseDisplay from './agent-components/ExecutorResponseDisplay'
+import SummaryResponseDisplay from './agent-components/SummaryResponseDisplay'
 import TodoList from './agent-components/TodoList'
 
 // TodoList 适配器：将 ComponentProps 转换为 TodoList 的 props
@@ -31,6 +32,7 @@ export function initComponents() {
   componentRegistry.register('planner-response', PlannerResponseDisplay)
   componentRegistry.register('verifier-response', VerifierResponseDisplay)
   componentRegistry.register('executor-response', ExecutorResponseDisplay)
+  componentRegistry.register('summary-response', SummaryResponseDisplay)
   
   // 注册字段级组件
   componentRegistry.register('todo-list', TodoListAdapter)

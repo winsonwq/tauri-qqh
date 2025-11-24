@@ -122,6 +122,7 @@ const renderMessageContent = (
     typeof parsePartialJson<{ type?: string; component?: string }>
   >,
   agentType?: string,
+  action?: string,
 ) => {
   // 检查是否有 JSON 结构（通过检查内容是否包含 JSON 特征来判断）
   const hasJsonStructure = content.trim().match(/\{[\s\S]*\}/) !== null
@@ -131,13 +132,19 @@ const renderMessageContent = (
   if (parsed?.data?.type === 'component' && parsed.data.component) {
     component = parsed.data.component
   } else if (hasJsonStructure && agentType) {
-    // 如果 JSON 不完整，但可以根据 agentType 推断组件类型
-    const componentMap: Record<string, string> = {
-      planner: 'planner-response',
-      executor: 'executor-response',
-      verifier: 'verifier-response',
+    // 如果 JSON 不完整，但可以根据 agentType 和 action 推断组件类型
+    // 检查是否是总结阶段
+    if (agentType === 'planner' && action === 'summarizing') {
+      component = 'summary-response'
+    } else {
+      // 如果 JSON 不完整，但可以根据 agentType 推断组件类型
+      const componentMap: Record<string, string> = {
+        planner: 'planner-response',
+        executor: 'executor-response',
+        verifier: 'verifier-response',
+      }
+      component = componentMap[agentType] || null
     }
-    component = componentMap[agentType] || null
   }
 
   // 如果有组件类型，尝试使用组件渲染
@@ -286,6 +293,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
               messages,
               parsedContent || undefined,
               message.agentType,
+              message.action,
             )
           ))}
         {/* 如果没有内容但正在流式输出，也显示光标 */}

@@ -28,6 +28,8 @@ const TaskInfo: React.FC<TaskInfoProps> = ({ props }) => {
     completed_at,
     result,
     error,
+    transcription_content,
+    has_transcription_content,
   } = props
 
   return (
@@ -73,9 +75,10 @@ const TaskInfo: React.FC<TaskInfoProps> = ({ props }) => {
           </div>
         )}
 
-        {/* 结果 */}
+        {/* 结果（文件路径） */}
         {result && (
           <div>
+            <div className="text-xs font-medium text-base-content/70 mb-1">结果文件路径：</div>
             {typeof result === 'string' ? (
               <pre className="text-xs text-base-content/90 whitespace-pre-wrap break-words bg-base-300 p-2 rounded">
                 {result}

@@ -506,6 +506,32 @@ async fn handle_get_task_info(
     .await
     .map_err(|e| format!("数据库操作失败: {}", e))??;
     
+    // 获取转写内容（如果任务已完成且有结果文件）
+    let transcription_content: Option<String> = if task.status == "completed" {
+        if let Some(ref result_path) = task.result {
+            let result_path_clone = result_path.clone();
+            match tokio::task::spawn_blocking(move || -> Result<Option<String>, String> {
+                let result_file = std::path::PathBuf::from(&result_path_clone);
+                if result_file.exists() {
+                    let content = std::fs::read_to_string(&result_file)
+                        .map_err(|e| format!("无法读取结果文件: {}", e))?;
+                    Ok(Some(content))
+                } else {
+                    Ok(None)
+                }
+            })
+            .await {
+                Ok(Ok(content)) => content,
+                Ok(Err(_)) => None, // 如果读取失败，不返回错误，只是不包含内容
+                Err(_) => None, // 如果任务执行失败，不包含内容
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    
     // 构建任务信息（作为 component 属性）
     let mut task_info = json!({
         "id": task.id,
@@ -516,6 +542,16 @@ async fn handle_get_task_info(
         "result": task.result,
         "error": task.error,
     });
+    
+    // 如果存在转写内容，添加到任务信息中
+    if let Some(content) = transcription_content {
+        task_info["transcription_content"] = json!(content);
+    }
+    
+    // 添加提示信息，说明如果存在转写内容，应该进行分析
+    if task_info.get("transcription_content").is_some() {
+        task_info["has_transcription_content"] = json!(true);
+    }
     
     // 如果资源存在，添加资源名称
     if let Some(resource) = resource {

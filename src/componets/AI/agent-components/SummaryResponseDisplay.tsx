@@ -3,15 +3,19 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ComponentProps } from '../ComponentRegistry'
 import { parsePartialJson } from '../../../utils/partialJsonParser'
-import { PlannerResponse } from '../../../agents/agentTypes'
 import { markdownComponents } from '../MarkdownComponents'
-import TodoList from './TodoList'
 
-interface PlannerResponseDisplayProps {
+interface SummaryResponse {
+  type?: 'component'
+  component?: string
+  summary: string
+}
+
+interface SummaryResponseDisplayProps {
   props: ComponentProps
 }
 
-const PlannerResponseDisplay: React.FC<PlannerResponseDisplayProps> = ({
+const SummaryResponseDisplay: React.FC<SummaryResponseDisplayProps> = ({
   props,
 }) => {
   const { content } = props
@@ -19,11 +23,11 @@ const PlannerResponseDisplay: React.FC<PlannerResponseDisplayProps> = ({
   // 解析 JSON
   const parsed = useMemo(() => {
     try {
-      return parsePartialJson<PlannerResponse>(content)
+      return parsePartialJson<SummaryResponse>(content)
     } catch (error) {
       console.warn('JSON 解析失败:', error)
       return {
-        data: {} as Partial<PlannerResponse>,
+        data: {} as Partial<SummaryResponse>,
         isValid: false,
         raw: content,
       }
@@ -38,7 +42,7 @@ const PlannerResponseDisplay: React.FC<PlannerResponseDisplayProps> = ({
   // 如果没有 JSON 结构，可能是纯文本总结
   if (!hasJsonStructure && content.trim().length > 0) {
     return (
-      <div className="planner-response stream-json-display">
+      <div className="summary-response stream-json-display">
         <div className="summary-section prose prose-sm max-w-none text-base-content">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
@@ -56,39 +60,29 @@ const PlannerResponseDisplay: React.FC<PlannerResponseDisplayProps> = ({
     return null
   }
 
-  const { summary, todos, needsMorePlanning } = data
+  const { summary } = data
 
   // 检查是否有有效数据，确保 summary 是字符串类型
   const summaryText = typeof summary === 'string' ? summary : String(summary || '')
-  const hasData =
-    (summaryText.trim().length > 0) ||
-    (Array.isArray(todos) && todos.length > 0) ||
-    needsMorePlanning !== undefined
+  const hasData = summaryText.trim().length > 0
 
   if (!hasData) {
     return null
   }
 
   return (
-    <div className="planner-response stream-json-display space-y-4">
-      {/* 渲染 summary */}
-      {summaryText.trim().length > 0 && (
-        <div className="summary-section prose prose-sm max-w-none text-base-content">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={markdownComponents}
-          >
-            {summaryText}
-          </ReactMarkdown>
-        </div>
-      )}
-
-      {/* 渲染 todos */}
-      {Array.isArray(todos) && todos.length > 0 && (
-        <TodoList todos={todos} />
-      )}
+    <div className="summary-response stream-json-display">
+      <div className="summary-section prose prose-sm max-w-none text-base-content">
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={markdownComponents}
+        >
+          {summaryText}
+        </ReactMarkdown>
+      </div>
     </div>
   )
 }
 
-export default PlannerResponseDisplay
+export default SummaryResponseDisplay
+
