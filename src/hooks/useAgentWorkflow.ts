@@ -154,7 +154,8 @@ async function waitForStreamComplete(
               : msg
           )
         )
-      } else if (payload.type === 'reasoning' && payload.content) {
+      } else if (payload.type === 'reasoning' && payload.content && payload.content.trim().length > 0) {
+        // 处理 reasoning/thinking 内容（过滤空内容）
         finalReasoning += payload.content
         updateMessages((prev) =>
           prev.map((msg) =>
@@ -173,13 +174,28 @@ async function waitForStreamComplete(
         if (unlisten) {
           unlisten()
         }
+        
+        // 清理消息对象中的空 reasoning 字段
+        const hasValidReasoning = finalReasoning.trim().length > 0
+        updateMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === assistantMessageId
+              ? {
+                  ...msg,
+                  // 如果 reasoning 为空，则移除该字段
+                  ...(hasValidReasoning ? { reasoning: finalReasoning } : { reasoning: undefined }),
+                }
+              : msg
+          )
+        )
+        
         if (payload.type === 'stopped' || isStoppedRef.current) {
           reject(new Error('已停止'))
         } else {
           resolve({
             content: finalContent,
             toolCalls: finalToolCalls,
-            reasoning: finalReasoning,
+            reasoning: hasValidReasoning ? finalReasoning : undefined,
           })
         }
       }
@@ -250,6 +266,8 @@ async function callAIAndWait(
   const result = await waitPromise
 
   // 保存消息到数据库
+  // 过滤空的 reasoning
+  const hasValidReasoning = result.reasoning && result.reasoning.trim().length > 0
   await invoke('save_message', {
     chatId,
     role: 'assistant',
@@ -257,7 +275,7 @@ async function callAIAndWait(
     toolCalls: result.toolCalls ? JSON.stringify(result.toolCalls) : null,
     toolCallId: null,
     name: null,
-    reasoning: result.reasoning || null,
+    reasoning: hasValidReasoning ? result.reasoning : null,
   }).catch((err) => {
     console.error('保存助手消息失败:', err)
   })
@@ -484,17 +502,22 @@ export async function runAgentWorkflow({
 
         // 更新消息的 agentType 和 action
         // 根据是否有 reasoning 或 tool_calls 来决定 action
-        let action: AgentAction = 'thinking' // 默认是思考
+        let action: AgentAction | undefined = undefined
         if (response.toolCalls && response.toolCalls.length > 0) {
           action = 'calling_tool'
-        } else if (response.reasoning) {
+        } else if (response.reasoning && response.reasoning.trim().length > 0) {
+          // 只在 reasoning 有实际内容时设置为 thinking
           action = 'thinking'
         }
 
         updateMessages((prev) =>
           prev.map((msg) =>
             msg.id === assistantMessageId
-              ? { ...msg, agentType: 'executor' as AgentType, action: action as AgentAction }
+              ? { 
+                  ...msg, 
+                  agentType: 'executor' as AgentType, 
+                  ...(action !== undefined && { action: action as AgentAction })
+                }
               : msg
           )
         )

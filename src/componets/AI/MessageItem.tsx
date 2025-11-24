@@ -64,7 +64,8 @@ const inferMessageAction = (message: AIMessage): AgentAction | undefined => {
     return 'calling_tool'
   }
 
-  if (message.reasoning) {
+  // 只在 reasoning 有实际内容时返回 thinking
+  if (message.reasoning && message.reasoning.trim().length > 0) {
     return 'thinking'
   }
 
@@ -207,8 +208,8 @@ export const MessageItem: React.FC<MessageItemProps> = ({
       style={isSticky ? { top: 0 } : undefined}
     >
       <div className={getMessageContentClasses(message.role)}>
-        {/* 显示 reasoning/thinking 内容 */}
-        {message.reasoning && (
+        {/* 显示 reasoning/thinking 内容（只在有实际内容时显示） */}
+        {message.reasoning && message.reasoning.trim().length > 0 && (
           <ReasoningSection reasoning={message.reasoning} />
         )}
 

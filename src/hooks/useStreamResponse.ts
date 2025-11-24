@@ -92,8 +92,8 @@ export function useStreamResponse() {
               )
             )
           }
-        } else if (payload.type === 'reasoning' && payload.content) {
-          // 处理 reasoning/thinking 内容
+        } else if (payload.type === 'reasoning' && payload.content && payload.content.trim().length > 0) {
+          // 处理 reasoning/thinking 内容（过滤空内容）
           finalReasoning += payload.content
           updateMessages((prev) =>
             prev.map((msg) =>
@@ -110,8 +110,22 @@ export function useStreamResponse() {
           setCurrentStreamEventId(null)
           setIsStreaming(false)
 
+          // 清理消息对象中的空 reasoning 字段
+          const hasValidReasoning = finalReasoning.trim().length > 0
+          updateMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === assistantMessageId
+                ? {
+                    ...msg,
+                    // 如果 reasoning 为空，则移除该字段
+                    ...(hasValidReasoning ? { reasoning: finalReasoning } : { reasoning: undefined }),
+                  }
+                : msg
+            )
+          )
+
           // 保存助手消息到数据库（即使被停止，也要保存已接收的内容）
-          if (finalContent || finalToolCalls || finalReasoning) {
+          if (finalContent || finalToolCalls || hasValidReasoning) {
             invoke('save_message', {
               chatId,
               role: 'assistant',
@@ -119,7 +133,7 @@ export function useStreamResponse() {
               toolCalls: finalToolCalls ? JSON.stringify(finalToolCalls) : null,
               toolCallId: null,
               name: null,
-              reasoning: finalReasoning || null,
+              reasoning: hasValidReasoning ? finalReasoning : null,
             }).catch((err) => {
               console.error('保存助手消息失败:', err)
             })
