@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { HiCheckCircle, HiXCircle, HiArrowRight, HiChevronDown, HiChevronUp } from 'react-icons/hi2'
-import { Todo } from '../../../agents/agentTypes'
-import Tooltip from '../../Tooltip'
+import { Todo } from '../core/types'
+import Tooltip from './Tooltip'
 
 // 简单的圆圈图标组件
 const CircleIcon: React.FC<{ className?: string }> = ({ className = '' }) => (
@@ -162,3 +162,4 @@ const TodoList: React.FC<TodoListProps> = ({ todos, title, collapseCompleted = t
 }
 
 export default TodoList
+

@@ -135,6 +135,11 @@ const AIPanel = () => {
   // 处理发送消息
   const handleSend = useCallback(
     async (messageText: string, configId?: string) => {
+      // 防止重复调用
+      if (isStreaming) {
+        return
+      }
+
       const effectiveConfigId = configId || selectedConfigId
       if (!effectiveConfigId) {
         message.error('请先选择 AI 配置')
@@ -183,12 +188,16 @@ const AIPanel = () => {
       try {
         setIsStreaming(true)
 
+        // 使用 messagesRef.current 获取最新的消息列表（不包含刚添加的用户消息）
+        // 因为 userMessage 会单独传递给 runAgentWorkflow
+        const currentMessages = messagesRef.current.filter(msg => msg.id !== userMessageId)
+
         // 使用 Agent 工作流
         await runAgentWorkflow({
           configId: effectiveConfigId,
           chatId: chatId!,
           userMessage: messageText,
-          messages: messages,
+          messages: currentMessages,
           updateMessages: updateMessages,
           messagesRef: messagesRef,
           mcpServers: mcpServers,
@@ -212,7 +221,6 @@ const AIPanel = () => {
       currentChat,
       handleCreateChat,
       updateMessages,
-      messages,
       messagesRef,
       mcpServers,
       currentResourceId,
@@ -222,6 +230,7 @@ const AIPanel = () => {
       setCurrentStreamEventId,
       executeToolCallsAndContinue,
       message,
+      isStreaming,
     ],
   )
 

@@ -1,21 +1,18 @@
 import React, { useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ComponentProps } from '../ComponentRegistry'
-import { parsePartialJson } from '../../../utils/partialJsonParser'
-import { PlannerResponse } from '../../../agents/agentTypes'
-import { markdownComponents } from '../MarkdownComponents'
+import { parsePartialJson } from '../utils/jsonParser'
+import { PlannerResponse } from '../core/types'
+import { markdownComponents } from './MarkdownComponents'
 import TodoList from './TodoList'
 
-interface PlannerResponseDisplayProps {
-  props: ComponentProps
+export interface PlannerResponseDisplayProps {
+  content: string
 }
 
 const PlannerResponseDisplay: React.FC<PlannerResponseDisplayProps> = ({
-  props,
+  content,
 }) => {
-  const { content } = props
-
   // 解析 JSON
   const parsed = useMemo(() => {
     try {
@@ -42,7 +39,7 @@ const PlannerResponseDisplay: React.FC<PlannerResponseDisplayProps> = ({
         <div className="summary-section prose prose-sm max-w-none text-base-content">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
-            components={markdownComponents}
+            components={markdownComponents as any}
           >
             {content}
           </ReactMarkdown>
@@ -77,7 +74,7 @@ const PlannerResponseDisplay: React.FC<PlannerResponseDisplayProps> = ({
         <div className="summary-section prose prose-sm max-w-none text-base-content">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
-            components={markdownComponents}
+            components={markdownComponents as any}
           >
             {summaryText}
           </ReactMarkdown>
@@ -93,3 +90,4 @@ const PlannerResponseDisplay: React.FC<PlannerResponseDisplayProps> = ({
 }
 
 export default PlannerResponseDisplay
+

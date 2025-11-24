@@ -6,11 +6,33 @@ import { componentRegistry, ComponentProps } from './ComponentRegistry'
 import ResourceInfo from './tool-components/ResourceInfo'
 import TaskInfo from './tool-components/TaskInfo'
 import ResourceList from './tool-components/ResourceList'
-import PlannerResponseDisplay from './agent-components/PlannerResponseDisplay'
-import VerifierResponseDisplay from './agent-components/VerifierResponseDisplay'
-import ExecutorResponseDisplay from './agent-components/ExecutorResponseDisplay'
-import SummaryResponseDisplay from './agent-components/SummaryResponseDisplay'
-import TodoList from './agent-components/TodoList'
+import { 
+  PlannerResponseDisplay, 
+  VerifierResponseDisplay, 
+  ExecutorResponseDisplay, 
+  SummaryResponseDisplay,
+  TodoList 
+} from '../../agent-framework/components'
+
+// Adapters for Framework Components
+const PlannerResponseAdapter: React.FC<{ props: ComponentProps }> = ({ props }) => (
+  <PlannerResponseDisplay content={props.content} />
+)
+
+const ExecutorResponseAdapter: React.FC<{ props: ComponentProps }> = ({ props }) => (
+  <ExecutorResponseDisplay content={props.content} />
+)
+
+const VerifierResponseAdapter: React.FC<{ props: ComponentProps }> = ({ props }) => (
+  <VerifierResponseDisplay 
+    content={props.content} 
+    plannerTodos={props.config?.plannerTodos}
+  />
+)
+
+const SummaryResponseAdapter: React.FC<{ props: ComponentProps }> = ({ props }) => (
+  <SummaryResponseDisplay content={props.content} />
+)
 
 // TodoList 适配器：将 ComponentProps 转换为 TodoList 的 props
 const TodoListAdapter: React.FC<{ props: ComponentProps }> = ({ props }) => {
@@ -29,10 +51,10 @@ export function initComponents() {
   componentRegistry.register('resource-list', ResourceList)
   
   // 注册 Agent 响应组件
-  componentRegistry.register('planner-response', PlannerResponseDisplay)
-  componentRegistry.register('verifier-response', VerifierResponseDisplay)
-  componentRegistry.register('executor-response', ExecutorResponseDisplay)
-  componentRegistry.register('summary-response', SummaryResponseDisplay)
+  componentRegistry.register('planner-response', PlannerResponseAdapter)
+  componentRegistry.register('verifier-response', VerifierResponseAdapter)
+  componentRegistry.register('executor-response', ExecutorResponseAdapter)
+  componentRegistry.register('summary-response', SummaryResponseAdapter)
   
   // 注册字段级组件
   componentRegistry.register('todo-list', TodoListAdapter)
@@ -42,4 +64,3 @@ export function initComponents() {
 
 // 在模块加载时自动初始化
 initComponents()
-

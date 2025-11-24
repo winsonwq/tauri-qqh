@@ -1,21 +1,18 @@
 import React, { useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ComponentProps } from '../ComponentRegistry'
-import { parsePartialJson } from '../../../utils/partialJsonParser'
-import { ExecutorResponse } from '../../../agents/agentTypes'
-import { markdownComponents } from '../MarkdownComponents'
+import { parsePartialJson } from '../utils/jsonParser'
+import { ExecutorResponse } from '../core/types'
+import { markdownComponents } from './MarkdownComponents'
 import TodoList from './TodoList'
 
-interface ExecutorResponseDisplayProps {
-  props: ComponentProps
+export interface ExecutorResponseDisplayProps {
+  content: string
 }
 
 const ExecutorResponseDisplay: React.FC<ExecutorResponseDisplayProps> = ({
-  props,
+  content,
 }) => {
-  const { content } = props
-
   // 解析 JSON
   const parsed = useMemo(() => {
     try {
@@ -47,7 +44,7 @@ const ExecutorResponseDisplay: React.FC<ExecutorResponseDisplayProps> = ({
         <div className="summary-section prose prose-sm max-w-none text-base-content">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
-            components={markdownComponents}
+            components={markdownComponents as any}
           >
             {summaryText}
           </ReactMarkdown>

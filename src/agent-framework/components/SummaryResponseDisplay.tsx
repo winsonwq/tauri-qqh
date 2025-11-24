@@ -1,9 +1,8 @@
 import React, { useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ComponentProps } from '../ComponentRegistry'
-import { parsePartialJson } from '../../../utils/partialJsonParser'
-import { markdownComponents } from '../MarkdownComponents'
+import { parsePartialJson } from '../utils/jsonParser'
+import { markdownComponents } from './MarkdownComponents'
 
 interface SummaryResponse {
   type?: 'component'
@@ -11,15 +10,13 @@ interface SummaryResponse {
   summary: string
 }
 
-interface SummaryResponseDisplayProps {
-  props: ComponentProps
+export interface SummaryResponseDisplayProps {
+  content: string
 }
 
 const SummaryResponseDisplay: React.FC<SummaryResponseDisplayProps> = ({
-  props,
+  content,
 }) => {
-  const { content } = props
-
   // 解析 JSON
   const parsed = useMemo(() => {
     try {
@@ -46,7 +43,7 @@ const SummaryResponseDisplay: React.FC<SummaryResponseDisplayProps> = ({
         <div className="summary-section prose prose-sm max-w-none text-base-content">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
-            components={markdownComponents}
+            components={markdownComponents as any}
           >
             {content}
           </ReactMarkdown>
@@ -75,7 +72,7 @@ const SummaryResponseDisplay: React.FC<SummaryResponseDisplayProps> = ({
       <div className="summary-section prose prose-sm max-w-none text-base-content">
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
-          components={markdownComponents}
+          components={markdownComponents as any}
         >
           {summaryText}
         </ReactMarkdown>
