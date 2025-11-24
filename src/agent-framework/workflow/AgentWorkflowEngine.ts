@@ -1,5 +1,5 @@
 import { IAgentBackend } from '../core/interfaces';
-import { AgentAction, AgentType, AIMessage, PlannerResponse, Todo, VerifierResponse, ToolCall } from '../core/types';
+import { AgentAction, AgentType, AIMessage, ExecutorResponse, PlannerResponse, Todo, VerifierResponse, ToolCall } from '../core/types';
 import { PromptManager } from '../prompts/PromptManager';
 import { parsePartialJson } from '../utils/jsonParser';
 
@@ -273,14 +273,7 @@ export class AgentWorkflowEngine {
 
       const plannerMessages: AIMessage[] = [
         ...currentMessages,
-        {
-          id: `planner-user-${planningRound}`,
-          role: 'user',
-          content: planningRound === 1 
-            ? userMessage 
-            : '请根据之前的对话，判断是否还需要进一步规划任务。如果需要，请补充或细化任务列表。',
-          timestamp: new Date(),
-        },
+        this.buildPlannerUserMessage(userMessage, planningRound),
       ];
 
       const eventId = `planner-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
@@ -302,21 +295,7 @@ export class AgentWorkflowEngine {
         ));
 
         const plannerResponse = this.parsePlannerResponse(response.content);
-        if (plannerResponse) {
-            const currentTodosCount = todos.length;
-            todos.push(...plannerResponse.todos);
-            const newTodosCount = todos.length;
-
-            log(`Planner 规划完成: 生成 ${newTodosCount - currentTodosCount} 个新任务`);
-
-            if (newTodosCount === currentTodosCount && plannerResponse.needsMorePlanning) {
-                needsMorePlanning = false;
-            } else {
-                needsMorePlanning = plannerResponse.needsMorePlanning;
-            }
-        } else {
-            needsMorePlanning = false;
-        }
+        needsMorePlanning = this.processPlannerResponse(plannerResponse, todos, log);
 
         // 注意：assistant 消息已经通过 callAI 中的 updateMessages 添加了
         // planner 循环中的用户消息是内部使用的，不应该通过 updateMessages 添加到 UI
@@ -360,14 +339,7 @@ export class AgentWorkflowEngine {
 
         const executorMessages: AIMessage[] = [
             ...currentMessages,
-            {
-                id: `executor-user-${todo.id}-${executorRound}`,
-                role: 'user',
-                content: executorRound === 1
-                    ? `请执行以下任务：\n\n任务ID: ${todo.id}\n任务描述: ${todo.description}\n\n请开始执行此任务。`
-                    : '请继续完成当前任务。如果已经完成，请明确说明任务已完成。',
-                timestamp: new Date(),
-            }
+            this.buildExecutorUserMessage(todo, executorRound),
         ];
 
         // Sanitize todo.id to ensure it only contains allowed characters for event name
@@ -398,84 +370,32 @@ export class AgentWorkflowEngine {
             ));
 
             if (response.toolCalls && response.toolCalls.length > 0) {
-                // Execute tools
-                log(`Executor 正在调用工具: ${response.toolCalls.map(t => t.function.name).join(', ')}`);
-                const toolResults: AIMessage[] = [];
-
-                for (const toolCall of response.toolCalls) {
-                    try {
-                        let args = {};
-                        try {
-                             args = JSON.parse(toolCall.function.arguments);
-                        } catch {}
-                        
-                        // TODO: Need to handle server mapping if multiple servers. 
-                        // For now assume backend handles it or we pass a combined tool executor.
-                        // The IAgentBackend.executeTool needs serverName.
-                        // We might need a way to find serverName from toolName. 
-                        // Or IToolExecutor handles it.
-                        // Let's assume backend.executeTool handles it if we pass toolName.
-                        // Actually, IAgentBackend definition has serverName.
-                        // I'll need a helper to find server. 
-                        // But `run` receives `mcpServers`? No, `tools` array.
-                        // The `executeTool` abstraction implies the caller knows the server.
-                        // In the original code `findToolServer` is used.
-                        // I should pass `mcpServers` in options if available, or rely on `backend` to find it.
-                        // Let's assume `backend.executeTool` can take just toolName if we change the interface, 
-                        // OR we implement the lookup here if we have mcpServers.
-                        // I'll use a simplified executeTool that takes toolName and args, 
-                        // and let the adapter handle the server lookup if needed.
-                        
-                        // Wait, the interface I defined is: executeTool(serverName, toolName, ...)
-                        // I need to find the serverName.
-                        // I should use `options.mcpServers`.
-                        
-                        const server = this.findToolServer(toolCall.function.name, options.mcpServers || []);
-                        const serverName = server ? (server.key || server.name) : 'default'; 
-                        // Fallback or error if no server found?
-
-                        const result = await this.backend.executeTool(
-                            serverName,
-                            toolCall.function.name,
-                            args,
-                            { currentResourceId: options.context?.currentResourceId, currentTaskId: options.context?.currentTaskId }
-                        );
-
-                        const toolResultMsg: AIMessage = {
-                            id: Date.now().toString() + Math.random(),
-                            role: 'tool',
-                            content: JSON.stringify(result),
-                            timestamp: new Date(),
-                            tool_call_id: toolCall.id,
-                            name: toolCall.function.name
-                        };
-                        toolResults.push(toolResultMsg);
-                        await this.backend.saveMessage(toolResultMsg, chatId);
-
-                    } catch (err) {
-                        console.error(err);
-                        // Handle error
-                    }
-                }
-                
-                updateMessages(prev => [...prev, ...toolResults]);
+                // 执行工具调用
+                await this.executeToolCalls(
+                    response.toolCalls,
+                    options.mcpServers || [],
+                    options.context,
+                    chatId,
+                    updateMessages,
+                    log
+                );
                 
                 // 注意：assistant 消息已经通过 callAI 中的 updateMessages 添加了
-                // toolResults 也已经通过上面的 updateMessages 添加了
+                // toolResults 也已经通过 executeToolCalls 中的 updateMessages 添加了
                 // executor 循环中的用户消息是内部使用的，不应该添加到 currentMessages
                 // currentMessages 已经通过 updateMessages 更新了
-
             } else {
-                // Check completion
-                const completionKeywords = ['任务完成', '已完成', '完成', '任务执行完成'];
-                const contentLower = response.content.toLowerCase();
-                todoCompleted = completionKeywords.some(k => contentLower.includes(k.toLowerCase()));
-
-                if (todoCompleted) {
-                    todo.status = 'completed';
-                    todo.result = response.content;
-                    log(`任务完成: ${todo.id}`);
-                }
+                // 处理 Executor 响应，判断任务完成状态
+                const executorResponse = this.parseExecutorResponse(response.content);
+                const completion = this.processExecutorResponse(
+                    executorResponse,
+                    response.content,
+                    todo,
+                    todos,
+                    log
+                );
+                
+                todoCompleted = completion.completed;
 
                 // 注意：assistant 消息已经通过 callAI 中的 updateMessages 添加了
                 // executor 循环中的用户消息是内部使用的，不应该添加到 currentMessages
@@ -591,8 +511,300 @@ export class AgentWorkflowEngine {
     return null;
   }
 
+  private parseExecutorResponse(content: string): ExecutorResponse | null {
+    const result = parsePartialJson<ExecutorResponse>(content);
+    if (result.data && (result.data.todos !== undefined || result.data.taskCompleted !== undefined)) {
+        return result.data as ExecutorResponse;
+    }
+    return null;
+  }
+
   private findToolServer(toolName: string, mcpServers: any[]): any {
       return mcpServers.find((s: any) => s.tools?.some((t: any) => t.name === toolName));
+  }
+
+  /**
+   * 执行工具调用列表
+   */
+  private async executeToolCalls(
+    toolCalls: ToolCall[],
+    mcpServers: any[],
+    context: Record<string, any> | undefined,
+    chatId: string,
+    updateMessages: (updater: (prev: AIMessage[]) => AIMessage[]) => void,
+    log: (msg: string) => void
+  ): Promise<AIMessage[]> {
+    const toolResults: AIMessage[] = [];
+    
+    log(`Executor 正在调用工具: ${toolCalls.map(t => t.function.name).join(', ')}`);
+
+    for (const toolCall of toolCalls) {
+      try {
+        // 解析工具参数
+        let args = {};
+        try {
+          args = JSON.parse(toolCall.function.arguments);
+        } catch {
+          // 参数解析失败，使用空对象
+        }
+
+        // 查找工具所属的服务器
+        const server = this.findToolServer(toolCall.function.name, mcpServers);
+        const serverName = server ? (server.key || server.name) : 'default';
+
+        // 执行工具
+        const result = await this.backend.executeTool(
+          serverName,
+          toolCall.function.name,
+          args,
+          {
+            currentResourceId: context?.currentResourceId,
+            currentTaskId: context?.currentTaskId
+          }
+        );
+
+        // 格式化工具结果为消息
+        const toolResultMsg: AIMessage = {
+          id: Date.now().toString() + Math.random(),
+          role: 'tool',
+          content: JSON.stringify(result),
+          timestamp: new Date(),
+          tool_call_id: toolCall.id,
+          name: toolCall.function.name
+        };
+
+        toolResults.push(toolResultMsg);
+        await this.backend.saveMessage(toolResultMsg, chatId);
+      } catch (err) {
+        console.error(`工具调用失败: ${toolCall.function.name}`, err);
+        // 继续执行其他工具，不中断整个流程
+      }
+    }
+
+    // 更新消息列表
+    updateMessages(prev => [...prev, ...toolResults]);
+    
+    return toolResults;
+  }
+
+  /**
+   * 从 Executor 响应中判断任务是否完成
+   */
+  private determineTaskCompletion(
+    executorResponse: ExecutorResponse,
+    currentTodoId: string
+  ): { completed: boolean; shouldSkip: boolean } {
+    // 优先使用 AI 返回的流程控制字段
+    if (executorResponse.taskCompleted !== undefined) {
+      return { completed: executorResponse.taskCompleted, shouldSkip: false };
+    }
+
+    if (executorResponse.nextAction === 'complete') {
+      return { completed: true, shouldSkip: false };
+    }
+
+    if (executorResponse.nextAction === 'skip') {
+      return { completed: true, shouldSkip: true };
+    }
+
+    // 如果没有明确的完成标志，检查当前任务的状态
+    const currentTaskInResponse = executorResponse.todos?.find(t => t.id === currentTodoId);
+    if (currentTaskInResponse?.status === 'completed') {
+      return { completed: true, shouldSkip: false };
+    }
+
+    // 根据 shouldContinue 判断（如果提供）
+    if (executorResponse.shouldContinue === false) {
+      return { completed: true, shouldSkip: false };
+    }
+
+    return { completed: false, shouldSkip: false };
+  }
+
+  /**
+   * 从 Executor 响应中更新所有任务状态
+   * 
+   * 重要规则：
+   * 1. 保护已完成任务的状态，避免被后续任务覆盖
+   * 2. 当前任务的状态由 completion 判断决定，不在此处更新
+   */
+  private updateTodosFromResponse(
+    executorResponse: ExecutorResponse,
+    todos: Todo[],
+    currentTodoId?: string
+  ): void {
+    if (!executorResponse.todos || executorResponse.todos.length === 0) {
+      return;
+    }
+
+    executorResponse.todos.forEach(responseTodo => {
+      const existingTodo = todos.find(t => t.id === responseTodo.id);
+      if (!existingTodo) {
+        return;
+      }
+
+      const isCurrentTask = currentTodoId && responseTodo.id === currentTodoId;
+      const isAlreadyCompleted = existingTodo.status === 'completed';
+
+      // 跳过当前任务：当前任务的状态由 completion 判断决定，不在此处更新
+      if (isCurrentTask) {
+        // 只更新非状态字段（如 isCurrent）
+        if (responseTodo.isCurrent !== undefined) {
+          existingTodo.isCurrent = responseTodo.isCurrent;
+        }
+        return;
+      }
+
+      // 保护已完成任务的状态：已完成的任务不更新状态，避免被覆盖
+      if (isAlreadyCompleted) {
+        // 只更新其他字段（如 result、isCurrent），不更新状态
+        if (responseTodo.result && !existingTodo.result) {
+          existingTodo.result = responseTodo.result;
+        }
+        if (responseTodo.isCurrent !== undefined) {
+          existingTodo.isCurrent = responseTodo.isCurrent;
+        }
+        return;
+      }
+
+      // 更新未完成任务的状态
+      existingTodo.status = responseTodo.status;
+      if (responseTodo.result) {
+        existingTodo.result = responseTodo.result;
+      }
+      if (responseTodo.isCurrent !== undefined) {
+        existingTodo.isCurrent = responseTodo.isCurrent;
+      }
+    });
+  }
+
+  /**
+   * 处理 Executor 响应，判断任务完成状态并更新任务列表
+   */
+  private processExecutorResponse(
+    executorResponse: ExecutorResponse | null,
+    responseContent: string,
+    currentTodo: Todo,
+    todos: Todo[],
+    log: (msg: string) => void
+  ): { completed: boolean; shouldSkip: boolean } {
+    if (!executorResponse) {
+      // 兜底：如果无法解析 JSON，尝试关键词匹配
+      return this.fallbackCompletionCheck(responseContent, currentTodo, log);
+    }
+
+    // 判断任务完成状态
+    const completion = this.determineTaskCompletion(executorResponse, currentTodo.id);
+
+    // 更新所有任务状态（保护已完成任务的状态）
+    this.updateTodosFromResponse(executorResponse, todos, currentTodo.id);
+
+    // 更新当前任务的状态
+    if (completion.completed) {
+      if (completion.shouldSkip) {
+        currentTodo.status = 'failed';
+        log(`任务跳过: ${currentTodo.id}`);
+      } else {
+        currentTodo.status = 'completed';
+        currentTodo.result = executorResponse.summary || responseContent;
+        log(`任务完成: ${currentTodo.id} (由 AI 判断)`);
+      }
+    } else {
+      // 如果任务未完成，检查是否应该继续
+      if (executorResponse.shouldContinue === false && executorResponse.taskCompleted !== true) {
+        // AI 明确表示不应该继续，但任务未完成，标记为失败
+        currentTodo.status = 'failed';
+        log(`任务无法继续: ${currentTodo.id}`);
+        return { completed: true, shouldSkip: false };
+      }
+    }
+
+    return completion;
+  }
+
+  /**
+   * 关键词匹配兜底逻辑（向后兼容）
+   */
+  private fallbackCompletionCheck(
+    content: string,
+    todo: Todo,
+    log: (msg: string) => void
+  ): { completed: boolean; shouldSkip: boolean } {
+    log(`警告: 无法解析 Executor 响应为 JSON，尝试关键词匹配`);
+    
+    const completionKeywords = ['任务完成', '已完成', '完成', '任务执行完成'];
+    const contentLower = content.toLowerCase();
+    const keywordMatch = completionKeywords.some(k => contentLower.includes(k.toLowerCase()));
+
+    if (keywordMatch) {
+      todo.status = 'completed';
+      todo.result = content;
+      log(`任务完成: ${todo.id} (通过关键词匹配)`);
+      return { completed: true, shouldSkip: false };
+    }
+
+    // 无法确定，继续执行（但会受到最大轮次限制）
+    return { completed: false, shouldSkip: false };
+  }
+
+  /**
+   * 处理 Planner 响应，更新任务列表并判断是否需要继续规划
+   */
+  private processPlannerResponse(
+    plannerResponse: PlannerResponse | null,
+    todos: Todo[],
+    log: (msg: string) => void
+  ): boolean {
+    if (!plannerResponse) {
+      return false; // 无法解析响应，停止规划
+    }
+
+    const currentTodosCount = todos.length;
+    todos.push(...plannerResponse.todos);
+    const newTodosCount = todos.length;
+
+    log(`Planner 规划完成: 生成 ${newTodosCount - currentTodosCount} 个新任务`);
+
+    // 如果没有新任务且 AI 表示不需要更多规划，则停止
+    if (newTodosCount === currentTodosCount && plannerResponse.needsMorePlanning) {
+      return false;
+    }
+
+    return plannerResponse.needsMorePlanning;
+  }
+
+  /**
+   * 构建 Executor 用户消息
+   */
+  private buildExecutorUserMessage(
+    todo: Todo,
+    executorRound: number
+  ): AIMessage {
+    return {
+      id: `executor-user-${todo.id}-${executorRound}`,
+      role: 'user',
+      content: executorRound === 1
+        ? `请执行以下任务：\n\n任务ID: ${todo.id}\n任务描述: ${todo.description}\n\n请开始执行此任务。`
+        : '请继续完成当前任务。如果已经完成，请明确说明任务已完成。',
+      timestamp: new Date(),
+    };
+  }
+
+  /**
+   * 构建 Planner 用户消息
+   */
+  private buildPlannerUserMessage(
+    userMessage: string,
+    planningRound: number
+  ): AIMessage {
+    return {
+      id: `planner-user-${planningRound}`,
+      role: 'user',
+      content: planningRound === 1
+        ? userMessage
+        : '请根据之前的对话，判断是否还需要进一步规划任务。如果需要，请补充或细化任务列表。',
+      timestamp: new Date(),
+    };
   }
 }
 

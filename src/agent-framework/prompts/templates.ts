@@ -209,6 +209,9 @@ export const EXECUTOR_TEMPLATE = `
   "type": "component",
   "component": "executor-response",
   "summary": "任务执行总结，说明执行过程和结果",
+  "taskCompleted": false,
+  "shouldContinue": true,
+  "nextAction": "continue",
   "todos": [
     {
       "id": "task-id-1",
@@ -232,6 +235,9 @@ export const EXECUTOR_TEMPLATE = `
 - **\`type\`**：**必须**，固定值 \`"component"\`
 - **\`component\`**：**必须**，固定值 \`"executor-response"\`
 - **\`summary\`**：**必须**，任务执行总结（字符串类型）
+- **\`taskCompleted\`**：**必须**，布尔值，表示当前任务是否已完成。这是系统判断任务完成的主要依据。
+- **\`shouldContinue\`**：**可选**，布尔值，表示是否需要继续执行当前任务。如果未提供，系统会根据 \`taskCompleted\` 和最大轮次限制自动判断。
+- **\`nextAction\`**：**可选**，字符串，表示下一步动作。可选值：\`"continue"\`（继续执行）、\`"complete"\`（任务已完成）、\`"skip"\`（跳过任务）、\`"retry"\`（重试任务）。
 - **\`todos\`**：**必须**，任务列表（数组类型）。**必须包含最近一次 planner 响应中的所有任务及其状态**。
   - **任务来源**：从对话历史中找到最近一次 planner 的响应，获取其 \`todos\` 数组。
   - **任务状态更新规则**：
@@ -239,6 +245,11 @@ export const EXECUTOR_TEMPLATE = `
     - 根据对话历史确定其他任务状态（\`completed\`, \`executing\`, \`pending\`, \`failed\`）
   - **任务字段**：\`id\`, \`description\`, \`priority\`, \`status\`
   - **\`isCurrent\`**：**可选**，标记当前正在处理的任务（\`status: "executing"\`）。只有一个任务应该被标记为 \`isCurrent: true\`。
+
+**流程控制说明**：
+- 系统会优先使用你返回的 \`taskCompleted\`、\`shouldContinue\` 和 \`nextAction\` 字段来控制执行流程
+- 如果这些字段缺失，系统会尝试从 \`todos\` 数组中当前任务的 \`status\` 字段推断
+- 系统会保留最大执行轮次限制（10轮）作为兜底机制，防止无限循环
 
 ## 注意事项
 

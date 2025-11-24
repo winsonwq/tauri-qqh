@@ -67,6 +67,10 @@ export interface ExecutorResponse {
   component?: string
   summary: string
   todos: Todo[]
+  // 流程控制字段（由 AI 决定执行流程）
+  taskCompleted?: boolean  // 当前任务是否已完成
+  shouldContinue?: boolean  // 是否需要继续执行（如果任务未完成但需要更多轮次）
+  nextAction?: 'continue' | 'complete' | 'skip' | 'retry'  // 下一步动作
 }
 
 export interface ToolCall {

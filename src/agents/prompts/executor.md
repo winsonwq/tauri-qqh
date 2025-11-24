@@ -155,6 +155,9 @@
   "type": "component",
   "component": "executor-response",
   "summary": "任务执行总结，说明执行过程和结果",
+  "taskCompleted": false,
+  "shouldContinue": true,
+  "nextAction": "continue",
   "todos": [
     {
       "id": "task-id-1",
@@ -174,6 +177,26 @@
       "description": "待执行的任务描述",
       "priority": 3,
       "status": "pending"
+    }
+  ]
+}
+```
+
+**任务完成示例**：
+```json
+{
+  "type": "component",
+  "component": "executor-response",
+  "summary": "任务已完成。通过检查对话历史，发现该任务的目标已经在之前的执行过程中完成。",
+  "taskCompleted": true,
+  "shouldContinue": false,
+  "nextAction": "complete",
+  "todos": [
+    {
+      "id": "task-id-1",
+      "description": "已完成的任务描述",
+      "priority": 1,
+      "status": "completed"
     }
   ]
 }
@@ -227,6 +250,28 @@
     - 如果任务已完成或未开始，不需要设置此字段或设置为 `false`
 
   **注意**：如果任务执行过程中生成了新的子任务，也应该包含在 `todos` 数组中。
+
+- **`taskCompleted`**：**必须**，布尔值，表示当前任务是否已完成
+  - `true`：当前任务已完成，系统将停止执行该任务
+  - `false`：当前任务未完成，系统将继续执行（如果未达到最大轮次限制）
+  - **重要**：这是系统判断任务完成的主要依据，必须准确设置
+
+- **`shouldContinue`**：**可选**，布尔值，表示是否需要继续执行当前任务
+  - `true`：需要继续执行（任务未完成但还需要更多轮次）
+  - `false`：不需要继续执行（任务已完成或无法继续）
+  - 如果未提供，系统会根据 `taskCompleted` 和最大轮次限制自动判断
+
+- **`nextAction`**：**可选**，字符串，表示下一步动作
+  - `"continue"`：继续执行当前任务（默认值）
+  - `"complete"`：任务已完成，停止执行
+  - `"skip"`：跳过当前任务（任务无法完成或不需要完成）
+  - `"retry"`：重试当前任务（遇到错误但可以重试）
+  - 如果未提供，系统会根据 `taskCompleted` 自动判断
+
+**流程控制说明**：
+- 系统会优先使用你返回的 `taskCompleted`、`shouldContinue` 和 `nextAction` 字段来控制执行流程
+- 如果这些字段缺失，系统会尝试从 `todos` 数组中当前任务的 `status` 字段推断
+- 系统会保留最大执行轮次限制（10轮）作为兜底机制，防止无限循环
 
 ## 注意事项
 
