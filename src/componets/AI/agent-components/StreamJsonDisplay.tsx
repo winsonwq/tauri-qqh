@@ -285,11 +285,6 @@ const StreamJsonDisplay: React.FC<StreamJsonDisplayProps> = ({ props }) => {
 
       {/* 额外的内容渲染 */}
       {renderExtraContent && renderExtraContent(data, isValid)}
-
-      {/* 流式传输提示 */}
-      {!isValid && hasData && (
-        <div className="text-xs text-warning/70 italic">正在接收数据...</div>
-      )}
     </div>
   )
 }

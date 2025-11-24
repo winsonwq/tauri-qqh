@@ -60,3 +60,10 @@ export interface VerifierResponse {
   overallFeedback: string
 }
 
+export interface ExecutorResponse {
+  type?: 'component'
+  component?: string
+  summary: string
+  todos: Todo[]
+}
+

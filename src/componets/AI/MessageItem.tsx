@@ -121,10 +121,27 @@ const renderMessageContent = (
   parsed?: ReturnType<
     typeof parsePartialJson<{ type?: string; component?: string }>
   >,
+  agentType?: string,
 ) => {
-  if (parsed?.data?.type === 'component' && parsed.data.component) {
-    const component = parsed.data.component
+  // 检查是否有 JSON 结构（通过检查内容是否包含 JSON 特征来判断）
+  const hasJsonStructure = content.trim().match(/\{[\s\S]*\}/) !== null
 
+  // 确定要使用的组件
+  let component: string | null = null
+  if (parsed?.data?.type === 'component' && parsed.data.component) {
+    component = parsed.data.component
+  } else if (hasJsonStructure && agentType) {
+    // 如果 JSON 不完整，但可以根据 agentType 推断组件类型
+    const componentMap: Record<string, string> = {
+      planner: 'planner-response',
+      executor: 'executor-response',
+      verifier: 'verifier-response',
+    }
+    component = componentMap[agentType] || null
+  }
+
+  // 如果有组件类型，尝试使用组件渲染
+  if (component) {
     // 准备组件 props
     const props: any = { content }
 
@@ -136,14 +153,29 @@ const renderMessageContent = (
       }
     }
 
+    // 使用一个包装组件来检查渲染结果
+    // 如果组件返回 null，但 JSON 结构存在，说明 JSON 不完整，应该显示部分内容
     return (
       <div className="text-sm prose prose-sm max-w-none text-base-content break-words">
-        <ComponentRenderer component={component} props={props} />
+        <ComponentRendererWrapper
+          component={component}
+          props={props}
+          hasJsonStructure={hasJsonStructure}
+          rawContent={content}
+        />
         {showCursor && <span className="ai-cursor" />}
       </div>
     )
   }
 
+  // 如果没有 component 类型，但有 JSON 结构，可能是 JSON 不完整
+  // 这种情况下，不显示原始 JSON，而是等待更多内容
+  if (hasJsonStructure && !parsed?.isValid) {
+    // JSON 不完整，但不显示原始内容，等待组件解析
+    return null
+  }
+
+  // 如果没有 JSON 结构，使用 markdown 渲染
   return (
     <div className="text-sm prose prose-sm max-w-none text-base-content break-words">
       <ReactMarkdown
@@ -155,6 +187,25 @@ const renderMessageContent = (
       {showCursor && <span className="ai-cursor" />}
     </div>
   )
+}
+
+// 包装组件，用于检查组件渲染结果
+const ComponentRendererWrapper: React.FC<{
+  component: string
+  props: any
+  hasJsonStructure: boolean
+  rawContent: string
+}> = ({ component, props, hasJsonStructure }) => {
+  const rendered = <ComponentRenderer component={component} props={props} />
+  
+  // 如果组件返回 null 或 undefined，但 JSON 结构存在，说明 JSON 不完整
+  // 这种情况下，不显示原始 JSON，也不显示等待提示，直接返回 null
+  // 组件会在有数据时自动显示
+  if (!rendered && hasJsonStructure) {
+    return null
+  }
+  
+  return rendered
 }
 
 // 渲染时间戳
@@ -234,6 +285,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
               shouldShowCursor,
               messages,
               parsedContent || undefined,
+              message.agentType,
             )
           ))}
         {/* 如果没有内容但正在流式输出，也显示光标 */}

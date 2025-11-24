@@ -3,15 +3,15 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ComponentProps } from '../ComponentRegistry'
 import { parsePartialJson } from '../../../utils/partialJsonParser'
-import { PlannerResponse } from '../../../agents/agentTypes'
+import { ExecutorResponse } from '../../../agents/agentTypes'
 import { markdownComponents } from '../MarkdownComponents'
 import TodoList from './TodoList'
 
-interface PlannerResponseDisplayProps {
+interface ExecutorResponseDisplayProps {
   props: ComponentProps
 }
 
-const PlannerResponseDisplay: React.FC<PlannerResponseDisplayProps> = ({
+const ExecutorResponseDisplay: React.FC<ExecutorResponseDisplayProps> = ({
   props,
 }) => {
   const { content } = props
@@ -19,18 +19,18 @@ const PlannerResponseDisplay: React.FC<PlannerResponseDisplayProps> = ({
   // 解析 JSON
   const parsed = useMemo(() => {
     try {
-      return parsePartialJson<PlannerResponse>(content)
+      return parsePartialJson<ExecutorResponse>(content)
     } catch (error) {
       console.warn('JSON 解析失败:', error)
       return {
-        data: {} as Partial<PlannerResponse>,
+        data: {} as Partial<ExecutorResponse>,
         isValid: false,
         raw: content,
       }
     }
   }, [content])
 
-  const { data, isValid } = parsed
+  const { data } = parsed
 
   // 检查是否有 JSON 结构（通过检查内容是否包含 JSON 特征来判断）
   const hasJsonStructure = content.trim().match(/\{[\s\S]*\}/) !== null
@@ -38,7 +38,7 @@ const PlannerResponseDisplay: React.FC<PlannerResponseDisplayProps> = ({
   // 如果没有 JSON 结构，可能是纯文本总结
   if (!hasJsonStructure && content.trim().length > 0) {
     return (
-      <div className="planner-response stream-json-display">
+      <div className="executor-response stream-json-display">
         <div className="summary-section prose prose-sm max-w-none text-base-content">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
@@ -56,20 +56,19 @@ const PlannerResponseDisplay: React.FC<PlannerResponseDisplayProps> = ({
     return null
   }
 
-  const { summary, todos, needsMorePlanning } = data
+  const { summary, todos } = data
 
   // 检查是否有有效数据
   const hasData =
     (summary && summary.trim().length > 0) ||
-    (Array.isArray(todos) && todos.length > 0) ||
-    needsMorePlanning !== undefined
+    (Array.isArray(todos) && todos.length > 0)
 
   if (!hasData) {
     return null
   }
 
   return (
-    <div className="planner-response stream-json-display space-y-4">
+    <div className="executor-response stream-json-display space-y-4">
       {/* 渲染 summary */}
       {summary && summary.trim().length > 0 && (
         <div className="summary-section prose prose-sm max-w-none text-base-content">
@@ -90,4 +89,5 @@ const PlannerResponseDisplay: React.FC<PlannerResponseDisplayProps> = ({
   )
 }
 
-export default PlannerResponseDisplay
+export default ExecutorResponseDisplay
+
