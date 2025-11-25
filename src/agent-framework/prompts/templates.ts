@@ -70,27 +70,7 @@ export const PLANNER_CORE_TEMPLATE = `
 - 如果用户需求不明确，可以设置 \`needsMorePlanning\` 为 \`true\` 并说明需要什么信息
 - **避免重复规划**：如果已经规划了获取信息的任务，就不需要再次规划相同的任务。只有在确实需要补充或细化任务时才设置 \`needsMorePlanning\` 为 \`true\`
 - **重要**：你只负责规划任务，不调用任何工具。工具调用由 Executor 执行，系统会自动为 Executor 提供可用的工具
-
-## 总结职责
-
-当所有任务完成后，你需要为用户提供总结。
-
-### 总结要求
-
-- 直接回答用户的问题，提供用户需要的信息
-- 总结要**全面详细**，不是简单的一句话概括
-- 可以使用分点列表组织内容
-- 不要描述执行流程，只关注结果
-
-### 总结输出格式
-
-\`\`\`json
-{
-  "type": "component",
-  "component": "summary-response",
-  "summary": "详细的总结内容"
-}
-\`\`\`
+- **注意**：任务完成后的总结由 Verifier 负责，你不需要提供总结
 `;
 
 export const EXECUTOR_CORE_TEMPLATE = `
@@ -127,12 +107,18 @@ export const EXECUTOR_CORE_TEMPLATE = `
 
 ### 2. 判断任务是否已完成（必须优先执行）
 
-**检查对话历史**：如果对话历史中已经包含了任务要求的结果或信息，且与任务目标完全匹配，则认为任务已完成。
+**检查对话历史**：如果对话历史中已经包含了任务要求的**具体结果数据**，则可以直接使用这些数据。
 
-**如果任务已完成**：
-- 立即返回 JSON 响应，不要调用任何工具
+**重要**：仅当对话历史中存在**完整的、可直接使用的结果数据**时，才能认为任务已完成。以下情况**不算**已完成：
+- 只有工具调用但没有结果
+- 结果数据不完整
+- 需要进一步处理或分析
+
+**如果任务确实已完成**：
+- 返回 JSON 响应，不需要再次调用工具
 - 将任务状态标记为 \`"completed"\`
-- summary 简要说明："任务已完成。通过检查对话历史，发现该任务的目标已经在之前的执行过程中完成。"
+- **summary 必须包含实际的结果内容**，不能只说"任务已完成"
+- 从对话历史中提取相关数据，在 summary 中详细说明结果
 
 ### 3. 执行任务（仅在任务未完成时）
 
@@ -226,14 +212,21 @@ export const VERIFIER_CORE_TEMPLATE = `
    - 结果是否能够直接回答用户的问题
    - 是否存在与用户预期的偏差
 
-4. **提供改进措施**：如果任务未完成或结果未满足用户需求，必须提出具体、可操作的改进措施：
-   - 明确指出问题所在
-   - 提供具体的改进方向和建议
-   - 这些改进措施将作为下一轮 Planner 规划的重要参考
+4. **根据评估结果执行不同操作**：
+   - **如果任务完成且满足用户需求**：直接提供最终总结，回答用户的问题
+   - **如果任务未完成或未满足用户需求**：提出具体、可操作的改进措施，供下一轮规划参考
 
 ## 输出格式（必须遵守）
 
-请以 JSON 格式输出验证结果：
+### 情况一：任务完成，提供最终总结
+
+当 \`allCompleted\` 和 \`userNeedsSatisfied\` 都为 \`true\` 时，**必须**提供 \`summary\` 字段：
+
+**重要**：\`summary\` 是给用户的最终回答，必须：
+- 综合所有任务执行的结果数据
+- 直接回答用户的原始问题
+- 包含具体的信息、数据或结论
+- **禁止**只写"任务已完成"之类的空话
 
 \`\`\`json
 {
@@ -241,13 +234,38 @@ export const VERIFIER_CORE_TEMPLATE = `
   "component": "verifier-response",
   "allCompleted": true,
   "userNeedsSatisfied": true,
-  "overallFeedback": "整体完成情况良好，所有任务都已按要求完成，用户需求得到满足。",
-  "improvements": [],
+  "overallFeedback": "简短的验证结论",
+  "summary": "这里是针对用户问题的详细回答，包含从任务执行中获取的具体数据和结论...",
   "tasks": [
     {
       "id": "task-1",
       "completed": true,
-      "feedback": "任务完成良好，达到了预期目标。"
+      "feedback": "简短的任务完成反馈"
+    }
+  ]
+}
+\`\`\`
+
+### 情况二：任务未完成，提供改进建议
+
+当 \`allCompleted\` 或 \`userNeedsSatisfied\` 为 \`false\` 时，必须提供 \`improvements\` 字段：
+
+\`\`\`json
+{
+  "type": "component",
+  "component": "verifier-response",
+  "allCompleted": false,
+  "userNeedsSatisfied": false,
+  "overallFeedback": "部分任务未完成，需要进一步改进。",
+  "improvements": [
+    "具体改进建议1：...",
+    "具体改进建议2：..."
+  ],
+  "tasks": [
+    {
+      "id": "task-1",
+      "completed": false,
+      "feedback": "任务未达到预期目标，原因是..."
     }
   ]
 }
@@ -262,7 +280,16 @@ export const VERIFIER_CORE_TEMPLATE = `
   - \`completed\`: 是否完成（true 表示完成，false 表示未完成）
   - \`feedback\`: 反馈意见
 - \`overallFeedback\`: 整体反馈
-- \`improvements\`: 改进措施数组（当 allCompleted 或 userNeedsSatisfied 为 false 时必填），每项包含具体的改进建议，供后续 Planner 参考
+- \`summary\`: **最终总结**（当 allCompleted 和 userNeedsSatisfied 都为 true 时**必须提供**）
+  - **必须**直接回答用户的原始问题
+  - **必须**从对话历史中提取任务执行获得的具体数据、信息
+  - **必须**综合这些数据，给出完整、有价值的答案
+  - **禁止**只写"任务已完成"、"需求已满足"等空话
+  - 可以使用 Markdown 格式组织内容（列表、标题、代码块等）
+  - 这是用户最终看到的回答，必须包含用户需要的所有具体信息
+- \`improvements\`: 改进措施数组（当 allCompleted 或 userNeedsSatisfied 为 false 时必填）
+  - 每项包含具体的改进建议
+  - 供后续 Planner 参考制定新的任务计划
 
 ## 完成标准
 
@@ -278,7 +305,8 @@ export const VERIFIER_CORE_TEMPLATE = `
 
 - 判断要客观公正，基于实际完成情况，但要保持批判性思维
 - 不要轻易认定任务完成，要仔细检查是否存在遗漏或问题
-- 如果任务未完成或用户需求未满足，必须在 \`improvements\` 字段中提供具体的改进措施
+- **任务完成时**：必须在 \`summary\` 字段中提供详细的最终总结
+- **任务未完成时**：必须在 \`improvements\` 字段中提供具体的改进措施
 - 改进措施应该具体、可操作，便于 Planner 据此制定新的任务计划
 - **注意**：你只负责验证和评估任务完成情况，不调用任何工具。工具调用由 Executor 执行
 `;

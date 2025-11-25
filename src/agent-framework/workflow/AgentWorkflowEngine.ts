@@ -337,9 +337,15 @@ export class AgentWorkflowEngine {
         executorRound++;
         log(`正在执行任务: ${todo.id} (第 ${executorRound} 轮)`);
 
+        // 构建 executor user 消息
+        const executorUserMsg = this.buildExecutorUserMessage(todo, executorRound);
+        
+        // 将 executor user 消息添加到 currentMessages，确保后续轮次能看到完整上下文
+        updateMessages(prev => [...prev, executorUserMsg]);
+
+        // 构建发送给 AI 的消息
         const executorMessages: AIMessage[] = [
-            ...currentMessages,
-            this.buildExecutorUserMessage(todo, executorRound),
+            ...currentMessages,  // 此时已包含 executorUserMsg
         ];
 
         // Sanitize todo.id to ensure it only contains allowed characters for event name
@@ -349,7 +355,7 @@ export class AgentWorkflowEngine {
 
         try {
             const response = await callAI(
-                executorMessages,
+                executorMessages,  // 使用包含内部指令的消息列表
                 'executor',
                 tools.length > 0 ? tools : null,
                 eventId,
@@ -379,11 +385,6 @@ export class AgentWorkflowEngine {
                     updateMessages,
                     log
                 );
-                
-                // 注意：assistant 消息已经通过 callAI 中的 updateMessages 添加了
-                // toolResults 也已经通过 executeToolCalls 中的 updateMessages 添加了
-                // executor 循环中的用户消息是内部使用的，不应该添加到 currentMessages
-                // currentMessages 已经通过 updateMessages 更新了
             } else {
                 // 处理 Executor 响应，判断任务完成状态
                 const executorResponse = this.parseExecutorResponse(response.content);
@@ -396,10 +397,6 @@ export class AgentWorkflowEngine {
                 );
                 
                 todoCompleted = completion.completed;
-
-                // 注意：assistant 消息已经通过 callAI 中的 updateMessages 添加了
-                // executor 循环中的用户消息是内部使用的，不应该添加到 currentMessages
-                // currentMessages 已经通过 updateMessages 更新了
             }
 
         } catch (error: any) {
@@ -413,85 +410,205 @@ export class AgentWorkflowEngine {
 
     if (this.isStopped) return;
 
-    // === Verifier Loop ===
-    log(`Verifier 开始验证任务`);
-    
-    const todosSummary = todos
-        .map(todo => `- ${todo.id}: ${todo.description} (状态: ${todo.status}${todo.result ? `, 结果: ${todo.result.substring(0, 100)}...` : ''})`)
-        .join('\n');
+    // === Verifier Loop (with retry for incomplete tasks) ===
+    let verificationRound = 0;
+    const maxVerificationRounds = 3;
+    let allTasksCompleted = false;
 
-    const verifierMessages: AIMessage[] = [
-        ...currentMessages,
-        {
-            id: 'verifier-user',
-            role: 'user',
-            content: `请验证以下任务的完成情况：\n\n${todosSummary}\n\n请为每个任务打分（0-100分），80分以上算完成。`,
-            timestamp: new Date(),
-        }
-    ];
+    while (!allTasksCompleted && verificationRound < maxVerificationRounds && !this.isStopped) {
+      verificationRound++;
+      log(`Verifier 开始验证任务 (第 ${verificationRound} 轮)`);
+      
+      const todosSummary = todos
+          .map(todo => `- ${todo.id}: ${todo.description} (状态: ${todo.status}${todo.result ? `, 结果: ${todo.result.substring(0, 100)}...` : ''})`)
+          .join('\n');
 
-    const verifierEventId = `verifier-${Date.now()}`;
-    const verifierMsgId = 'verifier-msg';
+      // 构建发送给 AI 的消息（包含内部指令，但不添加到 currentMessages）
+      const verifierMessages: AIMessage[] = [
+          ...currentMessages,
+          {
+              id: `verifier-user-${verificationRound}`,
+              role: 'user',
+              content: `请验证以下任务的完成情况：\n\n用户原始问题：${userMessage}\n\n任务列表：\n${todosSummary}\n\n请评估每个任务是否完成，以及整体是否满足用户需求。如果全部完成，请直接提供最终总结；如果未完成，请提出改进建议。`,
+              timestamp: new Date(),
+          }
+      ];
 
-    try {
-        const response = await callAI(
-            verifierMessages,
-            'verifier',
-            null,
-            verifierEventId,
-            verifierMsgId
-        );
+      const verifierEventId = `verifier-${verificationRound}-${Date.now()}`;
+      const verifierMsgId = `verifier-msg-${verificationRound}`;
 
-        updateMessages(prev => prev.map(msg => 
-            msg.id === verifierMsgId 
-              ? { ...msg, agentType: 'verifier', action: 'verifying' } 
-              : msg
-        ));
+      try {
+          const response = await callAI(
+              verifierMessages,
+              'verifier',
+              null,
+              verifierEventId,
+              verifierMsgId
+          );
 
-        const verifierResponse = this.parseVerifierResponse(response.content);
-        if (verifierResponse?.allCompleted) {
-            log('所有任务已完成验收，开始总结');
-            
-            const summaryMessages: AIMessage[] = [
-                ...currentMessages,
-                verifierMessages[verifierMessages.length - 1],
-                {
-                    id: verifierMsgId,
-                    role: 'assistant',
-                    content: response.content,
-                    timestamp: new Date(),
-                    agentType: 'verifier'
-                },
-                {
-                    id: 'planner-summary-user',
-                    role: 'user',
-                    content: `所有任务已完成验收。请总结用户问题的完成情况。\n\n用户原始问题：${userMessage}\n\n请基于任务执行结果，总结用户问题的完成情况...`,
-                    timestamp: new Date(),
-                }
-            ];
+          updateMessages(prev => prev.map(msg => 
+              msg.id === verifierMsgId 
+                ? { ...msg, agentType: 'verifier', action: 'verifying' } 
+                : msg
+          ));
 
-            await callAI(
-                summaryMessages,
-                'planner',
-                null,
-                `summary-${Date.now()}`,
-                'planner-summary-msg'
-            );
-            
-            // Update last message to summarizing
-            updateMessages(prev => prev.map(msg => 
-                msg.id === 'planner-summary-msg'
-                  ? { ...msg, agentType: 'planner', action: 'summarizing' }
-                  : msg
-            ));
-            
-            log('Planner 总结完成');
-        }
+          const verifierResponse = this.parseVerifierResponse(response.content);
+          
+          // 判断是否完成
+          const isCompleted = verifierResponse?.allCompleted && 
+                              (verifierResponse?.userNeedsSatisfied !== false);
+          
+          if (isCompleted) {
+              // 任务完成，verifier 已经提供了总结
+              allTasksCompleted = true;
+              
+              // 如果 verifier 提供了 summary，更新消息显示为总结状态
+              if (verifierResponse?.summary) {
+                  log('所有任务已完成验收，Verifier 已提供总结');
+                  updateMessages(prev => prev.map(msg => 
+                      msg.id === verifierMsgId 
+                        ? { ...msg, agentType: 'verifier', action: 'summarizing' } 
+                        : msg
+                  ));
+              } else {
+                  log('所有任务已完成验收');
+              }
+          } else {
+              // 任务未完成，需要进入下一轮规划
+              log(`验证未通过，需要改进。改进建议: ${verifierResponse?.improvements?.join('; ') || '无'}`);
+              
+              if (verificationRound < maxVerificationRounds) {
+                  // 构建改进建议消息，供 planner 参考
+                  const improvementsText = verifierResponse?.improvements?.length 
+                      ? `\n\n改进建议：\n${verifierResponse.improvements.map((imp, i) => `${i + 1}. ${imp}`).join('\n')}`
+                      : '';
+                  
+                  // 重新进入 planner 规划
+                  log(`进入第 ${verificationRound + 1} 轮规划`);
+                  
+                  // 构建发送给 AI 的消息（包含内部指令，但不添加到 currentMessages）
+                  const rePlannerMessages: AIMessage[] = [
+                      ...currentMessages,
+                      {
+                          id: `replanner-user-${verificationRound}`,
+                          role: 'user',
+                          content: `上一轮任务执行后，Verifier 评估未通过。${improvementsText}\n\n请根据改进建议，重新规划任务以完成用户的原始需求：${userMessage}`,
+                          timestamp: new Date(),
+                      }
+                  ];
 
-    } catch (error: any) {
-        events.onError?.(error);
-        if (this.isStopped) return;
-        throw error;
+                  const rePlannerEventId = `replanner-${verificationRound}-${Date.now()}`;
+                  const rePlannerMsgId = `replanner-msg-${verificationRound}`;
+
+                  const rePlannerResponse = await callAI(
+                      rePlannerMessages,
+                      'planner',
+                      null,
+                      rePlannerEventId,
+                      rePlannerMsgId
+                  );
+
+                  updateMessages(prev => prev.map(msg => 
+                      msg.id === rePlannerMsgId 
+                        ? { ...msg, agentType: 'planner', action: 'planning' } 
+                        : msg
+                  ));
+
+                  const plannerResponse = this.parsePlannerResponse(rePlannerResponse.content);
+                  if (plannerResponse?.todos?.length) {
+                      // 添加新任务
+                      todos.push(...plannerResponse.todos);
+                      log(`Planner 补充了 ${plannerResponse.todos.length} 个新任务`);
+                      
+                      // 执行新任务
+                      const newTodos = plannerResponse.todos;
+                      for (const todo of newTodos) {
+                          if (this.isStopped) return;
+
+                          todo.status = 'executing';
+                          log(`开始执行补充任务: ${todo.id}`);
+
+                          let todoCompleted = false;
+                          let executorRound = 0;
+                          const maxExecutorRounds = 10;
+
+                          while (!todoCompleted && executorRound < maxExecutorRounds && !this.isStopped) {
+                              executorRound++;
+                              
+                              // 构建 executor user 消息
+                              const executorUserMsg = this.buildExecutorUserMessage(todo, executorRound);
+                              
+                              // 将 executor user 消息添加到 currentMessages，确保后续轮次能看到完整上下文
+                              updateMessages(prev => [...prev, executorUserMsg]);
+
+                              // 构建发送给 AI 的消息
+                              const executorMessages: AIMessage[] = [
+                                  ...currentMessages,  // 此时已包含 executorUserMsg
+                              ];
+
+                              const safeTodoId = todo.id.replace(/[^a-zA-Z0-9-_]/g, '');
+                              const eventId = `executor-${safeTodoId}-${executorRound}-${Date.now()}`;
+                              const assistantMessageId = `executor-msg-${todo.id}-${executorRound}`;
+
+                              try {
+                                  const response = await callAI(
+                                      executorMessages,
+                                      'executor',
+                                      tools.length > 0 ? tools : null,
+                                      eventId,
+                                      assistantMessageId
+                                  );
+
+                                  let action: AgentAction | undefined = undefined;
+                                  if (response.toolCalls && response.toolCalls.length > 0) {
+                                      action = 'calling_tool';
+                                  } else if (response.reasoning && response.reasoning.trim().length > 0) {
+                                      action = 'thinking';
+                                  }
+
+                                  updateMessages(prev => prev.map(msg => 
+                                      msg.id === assistantMessageId 
+                                        ? { ...msg, agentType: 'executor', ...(action && { action }) } 
+                                        : msg
+                                  ));
+
+                                  if (response.toolCalls && response.toolCalls.length > 0) {
+                                      await this.executeToolCalls(
+                                          response.toolCalls,
+                                          options.mcpServers || [],
+                                          options.context,
+                                          chatId,
+                                          updateMessages,
+                                          log
+                                      );
+                                  } else {
+                                      const executorResponse = this.parseExecutorResponse(response.content);
+                                      const completion = this.processExecutorResponse(
+                                          executorResponse,
+                                          response.content,
+                                          todo,
+                                          todos,
+                                          log
+                                      );
+                                      todoCompleted = completion.completed;
+                                  }
+                              } catch (error: any) {
+                                  events.onError?.(error);
+                                  if (this.isStopped) return;
+                                  todo.status = 'failed';
+                                  break;
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+
+      } catch (error: any) {
+          events.onError?.(error);
+          if (this.isStopped) return;
+          throw error;
+      }
     }
   }
 
@@ -504,7 +621,14 @@ export class AgentWorkflowEngine {
   }
 
   private parseVerifierResponse(content: string): VerifierResponse | null {
-    const result = parsePartialJson<{ tasks?: any[]; allCompleted?: boolean }>(content);
+    const result = parsePartialJson<{ 
+      tasks?: any[]; 
+      allCompleted?: boolean;
+      userNeedsSatisfied?: boolean;
+      improvements?: string[];
+      summary?: string;
+      overallFeedback?: string;
+    }>(content);
     if (result.data && (result.data.tasks || result.data.allCompleted !== undefined)) {
         return result.data as VerifierResponse;
     }

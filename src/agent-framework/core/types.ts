@@ -54,12 +54,15 @@ export interface VerifierResponse {
   type?: 'component'
   component?: string
   allCompleted: boolean
+  userNeedsSatisfied?: boolean
   tasks: Array<{
     id: string
     completed: boolean
     feedback: string
   }>
   overallFeedback: string
+  improvements?: string[]  // 改进建议，供下一轮规划参考
+  summary?: string  // 最终总结（当任务完成时由 verifier 直接提供）
 }
 
 export interface ExecutorResponse {

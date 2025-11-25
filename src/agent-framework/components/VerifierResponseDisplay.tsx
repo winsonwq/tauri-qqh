@@ -84,9 +84,19 @@ const VerifierResponseDisplay: React.FC<VerifierResponseDisplayProps> = ({
     }
     return String(overallFeedback)
   }, [overallFeedback])
+
+  // 获取最终总结（任务完成时由 verifier 提供）
+  const summaryText = useMemo(() => {
+    if (!data?.summary) return ''
+    if (typeof data.summary === 'string') {
+      return data.summary
+    }
+    return String(data.summary)
+  }, [data?.summary])
   
   const hasData =
     (overallFeedbackText.trim().length > 0) ||
+    (summaryText.trim().length > 0) ||
     todos.length > 0 ||
     data?.allCompleted !== undefined
 
@@ -96,7 +106,20 @@ const VerifierResponseDisplay: React.FC<VerifierResponseDisplayProps> = ({
 
   return (
     <div className="verifier-response stream-json-display space-y-4">
-      {overallFeedbackText.trim().length > 0 && (
+      {/* 显示最终总结（优先级最高） */}
+      {summaryText.trim().length > 0 && (
+        <div className="summary-section prose prose-sm max-w-none text-base-content">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={markdownComponents as any}
+          >
+            {summaryText}
+          </ReactMarkdown>
+        </div>
+      )}
+
+      {/* 如果没有总结，显示整体反馈 */}
+      {!summaryText.trim() && overallFeedbackText.trim().length > 0 && (
         <div className="summary-section prose prose-sm max-w-none text-base-content">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
