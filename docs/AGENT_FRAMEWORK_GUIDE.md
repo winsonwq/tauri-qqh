@@ -2029,3 +2029,302 @@ Agent Framework 提供了一个强大的多 Agent 协作框架，通过职责分
 
 **提示词优先，代码兜底**：让 AI 通过提示词控制大部分执行逻辑，代码主要负责调用、解析和基础错误处理。这样既保证了灵活性，又确保了安全性和性能。
 
+---
+
+## 跨平台代码生成提示词模版
+
+> 本章节提供一套通用提示词模版，帮助你在任意编程语言和 AI 工具环境中快速实现 Agent Framework 的核心架构。
+
+### 适用场景
+
+| 场景 | 说明 |
+|------|------|
+| **跨语言实现** | 在 Python、Go、Rust、Java、C# 等语言中实现 Agent 工作流 |
+| **跨平台部署** | 在 CLI、Web 服务、桌面应用、Serverless 等环境中运行 |
+| **AI 工具集成** | 在 Cursor、Claude CLI、Gemini CLI、ChatGPT 等工具中使用 |
+| **快速原型** | 快速验证 Agent 工作流在特定业务场景的可行性 |
+
+### 工作原理
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        你的输入                                  │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
+│  │ {{LANGUAGE}}│  │ {{PLATFORM}}│  │ {{BUSINESS_CONTEXT}}    │  │
+│  │   Python    │  │   FastAPI   │  │ 智能客服系统...          │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                    通用提示词模版                                 │
+│  + 架构要求 + 接口定义 + 流程控制 + 输出规范                      │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                    AI 工具（Cursor/Claude/Gemini）               │
+│  引用框架核心提示词：                                             │
+│  - PLANNER_CORE_TEMPLATE                                        │
+│  - EXECUTOR_CORE_TEMPLATE                                       │
+│  - VERIFIER_CORE_TEMPLATE                                       │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                    生成的工程化代码                               │
+│  ├── engine/          # 工作流调度器                             │
+│  ├── prompts/         # 提示词管理                               │
+│  ├── backend/         # AI 接口实现                              │
+│  ├── tools/           # MCP 工具处理                             │
+│  └── main.py          # 入口文件                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 使用步骤
+
+**Step 1**: 复制下方「通用提示词模版」
+
+**Step 2**: 替换模版中的变量
+
+| 变量 | 必填 | 说明 | 示例 |
+|------|:----:|------|------|
+| `{{LANGUAGE}}` | ✅ | 目标编程语言 | `Python`、`Go`、`Rust`、`TypeScript` |
+| `{{PLATFORM}}` | ✅ | 目标平台/框架 | `FastAPI`、`Gin`、`Actix`、`Express` |
+| `{{BUSINESS_CONTEXT}}` | ✅ | 业务场景描述 | 见下方示例 |
+| `{{AI_PROVIDER}}` | ❌ | AI 服务商（可选） | `OpenAI`、`Anthropic`、`Azure OpenAI` |
+
+**Step 3**: 将提示词粘贴到 AI 工具中执行
+
+**Step 4**: 按照生成的「快速启动指南」运行代码
+
+### 通用提示词模版
+
+> 💡 **提示**：复制以下完整内容，替换 `{{变量}}` 后使用。
+
+````markdown
+# Agent Workflow 代码生成任务
+
+## 目标
+
+基于 Agent Framework 的设计理念，使用 **{{LANGUAGE}}** 语言在 **{{PLATFORM}}** 平台上实现一个完整的多 Agent 协作工作流系统。
+
+## 业务上下文
+
+{{BUSINESS_CONTEXT}}
+
+---
+
+## 第一部分：核心架构实现
+
+### 1. 工作流调度器（AgentWorkflowEngine）
+
+**职责**：协调 Planner → Executor → Verifier 三个 Agent 的执行流程。
+
+**核心流程**：
+
+```
+用户请求
+    ↓
+┌─────────────────────────────────────────────────────────┐
+│  Planner Loop (max 3 rounds)                            │
+│  - 理解用户需求                                          │
+│  - 分解为 Todo 列表                                      │
+│  - 参考 Verifier 的 improvements（如有）                 │
+└─────────────────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────────────────┐
+│  Executor Loop (max 10 rounds per task)                 │
+│  - 检查任务是否已完成（优先检查对话历史）                   │
+│  - 调用工具获取信息（遵守去重策略）                        │
+│  - 返回流程控制字段：taskCompleted, shouldContinue       │
+└─────────────────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────────────────┐
+│  Verifier Loop (1 round)                                │
+│  - 验证所有任务完成情况                                   │
+│  - 如果完成：返回 summary（最终答案）                     │
+│  - 如果未完成：返回 improvements → 回到 Planner          │
+└─────────────────────────────────────────────────────────┘
+    ↓
+返回最终结果
+```
+
+**关键方法**：
+- `run(options, callbacks)`: 执行完整工作流
+- `stop()`: 停止工作流执行
+
+**依赖注入**：
+- `IAgentBackend`: AI 调用和工具执行的抽象接口
+- `PromptManager`: 提示词管理器
+
+### 2. 提示词管理器（PromptManager）
+
+**职责**：管理双层提示词架构（框架层 + 业务层）。
+
+**关键方法**：
+- `set_business_context(agent_type, context)`: 设置指定 Agent 的业务上下文
+- `get_prompt(agent_type)`: 获取完整提示词（框架模板 + 业务上下文）
+
+**核心逻辑**：
+- 维护 3 个 Agent 的核心模板（PLANNER/EXECUTOR/VERIFIER_CORE_TEMPLATE）
+- 将 `{{businessContext}}` 占位符替换为业务上下文
+- 返回合并后的完整提示词
+
+### 3. 后端接口（IAgentBackend）
+
+**职责**：抽象 AI 调用和工具执行，支持不同实现。
+
+**接口方法**：
+
+| 方法 | 说明 |
+|------|------|
+| `chat_completion(options)` | 调用 AI 对话接口，支持流式响应 |
+| `execute_tool(server_name, tool_name, args, context)` | 执行 MCP 工具调用 |
+| `save_message(message, chat_id)` | 保存消息到持久化存储 |
+| `listen_to_stream(event_id, callbacks)` | 监听流式响应事件 |
+
+**流式响应回调**：
+- `on_content`: 接收文本内容
+- `on_tool_calls`: 接收工具调用请求
+- `on_reasoning`: 接收推理过程（可选）
+- `on_done`: 响应完成
+- `on_error`: 错误处理
+
+### 4. 类型定义
+
+**Agent 类型**：`planner` | `executor` | `verifier`
+
+**核心数据结构**：
+
+| 类型 | 关键字段 |
+|------|---------|
+| `AIMessage` | id, role, content, timestamp, agent_type, tool_calls, tool_call_id, name |
+| `ToolCall` | id, function (name, arguments) |
+| `Todo` | id, description, priority, status |
+| `PlannerResponse` | summary, needsMorePlanning, todos |
+| `ExecutorResponse` | summary, taskCompleted, shouldContinue, nextAction, todos |
+| `VerifierResponse` | allCompleted, userNeedsSatisfied, summary, improvements, tasks |
+
+---
+
+## 第二部分：关键逻辑实现
+
+### 1. 流程控制逻辑
+
+Executor 通过 JSON 响应中的字段控制流程，代码负责解析和应用。
+
+**判断优先级**：
+1. 优先使用 `taskCompleted` 字段
+2. 其次检查 `nextAction` 是否为 `complete`
+3. 最后从 `todos` 数组中推断当前任务状态
+
+### 2. 工具调用去重
+
+在 Executor 调用工具前，检查对话历史避免重复调用相同工具（相同名称 + 相同参数）。
+
+**检查逻辑**：
+1. 遍历对话历史中的 assistant 消息
+2. 查找匹配的工具调用（名称和参数相同）
+3. 检查是否有对应的有效工具结果
+4. 如有有效结果则跳过调用，直接复用
+
+### 3. 工具执行流程
+
+**执行步骤**：
+1. 解析工具参数（JSON 字符串 → 对象）
+2. 查找工具所属的 MCP 服务器
+3. 调用 `backend.execute_tool()` 执行
+4. 将结果格式化为 `role: tool` 的消息
+5. 保存消息并添加到对话历史
+
+---
+
+## 第三部分：核心提示词引用
+
+**重要**：在生成的代码中，必须引用以下 3 个核心角色提示词。这些提示词定义了每个 Agent 的角色、职责、输出格式和框架约束。
+
+请从 Agent Framework 的 `src/agent-framework/prompts/templates.ts` 文件中获取：
+
+| 模板名称 | 角色 | 关键输出字段 |
+|---------|------|-------------|
+| `PLANNER_CORE_TEMPLATE` | 任务规划专家 | needsMorePlanning, todos, summary |
+| `EXECUTOR_CORE_TEMPLATE` | 任务执行专家 | taskCompleted, shouldContinue, nextAction, todos |
+| `VERIFIER_CORE_TEMPLATE` | 任务验收专家 | allCompleted, userNeedsSatisfied, summary, improvements |
+
+---
+
+## 第四部分：输出要求
+
+### 项目结构
+
+生成的项目应包含以下模块：
+
+| 模块 | 职责 |
+|------|------|
+| `engine/` | 工作流调度器实现 |
+| `prompts/` | 提示词模板和管理器 |
+| `backend/` | IAgentBackend 接口定义和实现 |
+| `tools/` | MCP 工具调用处理 |
+| `types/` | 类型/模型定义 |
+| `main` | 入口文件和使用示例 |
+| 依赖配置 | 语言对应的依赖管理文件 |
+
+### 代码质量要求
+
+1. **类型安全**：充分利用目标语言的类型系统
+2. **错误处理**：完善的异常捕获和错误恢复机制
+3. **日志记录**：关键流程添加日志，便于调试
+4. **异步处理**：正确处理异步操作，避免阻塞
+5. **代码注释**：关键逻辑添加清晰注释
+
+---
+
+## 第五部分：快速启动指南
+
+生成代码后，请提供完整的启动指南，包括：
+
+1. **环境要求**：语言版本、操作系统兼容性
+2. **安装步骤**：创建项目、安装依赖的命令
+3. **配置说明**：环境变量（AI API Key、Base URL、Model 等）
+4. **运行命令**：启动服务的命令
+5. **测试示例**：验证服务是否正常运行的测试请求
+6. **常见问题**：添加工具、自定义提示词、调整参数等
+````
+
+---
+
+### 业务上下文编写指南
+
+`{{BUSINESS_CONTEXT}}` 是决定生成代码质量的关键。建议包含以下内容：
+
+#### 推荐结构
+
+```markdown
+## 业务上下文
+
+### 系统概述
+[一句话描述系统的核心功能]
+
+### 核心概念
+- **概念 A**：定义和说明
+- **概念 B**：定义和说明
+
+### 主要功能
+1. 功能 1：描述
+2. 功能 2：描述
+
+### 业务规则
+- 规则 1
+- 规则 2
+
+---
+
+### 注意事项
+
+| 事项 | 说明 |
+|------|------|
+| **核心提示词** | 3 个角色的核心提示词需从本框架 `src/agent-framework/prompts/templates.ts` 获取，或参考本文档「提示词架构设计」章节 |
+| **MCP 工具** | 如需调用 MCP 工具，需额外配置 MCP 服务器连接（参考 MCP 协议文档） |
+| **流式响应** | 不同 AI 服务商的流式响应格式不同，需根据实际情况调整解析逻辑 |
+| **最大轮次** | Planner 3 轮、Executor 10 轮的限制是兜底机制，可根据业务需求调整 |
+| **错误处理** | 生成的代码可能需要根据实际环境补充错误处理逻辑 |
+
+---
