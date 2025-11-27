@@ -186,7 +186,7 @@ export function generateObservationPrompt(): string {
 
 **观察** [简短总结结果，1-2句话]
 
-**建议** [下一步应该做什么]
+**建议（如果有）** [下一步应该做什么]
 
 ### 重要
 
