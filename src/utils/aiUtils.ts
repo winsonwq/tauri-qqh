@@ -1,4 +1,12 @@
 /**
+ * 工具信息接口
+ */
+export interface ToolInfo {
+  name: string
+  description: string
+}
+
+/**
  * 生成 AI 系统消息
  * @param currentResourceId 当前资源ID（可选）
  * @param currentTaskId 当前任务ID（可选）
@@ -10,14 +18,14 @@ export function generateSystemMessage(
 ): string {
   const resourceSection = currentResourceId
     ? `
-- 当前资源ID: ${currentResourceId}。你可以使用 get_resource_info 工具查询当前资源的详细信息。如果不提供 resource_id 参数，工具会自动使用当前上下文中的资源ID。
-  注意：在调用 get_resource_info 之前，请先检查对话历史中是否已经包含该资源的信息。`
+- 当前资源ID: ${currentResourceId}。你可以使用相关工具查询当前资源的详细信息。
+  注意：在调用工具之前，请先检查对话历史中是否已经包含该资源的信息。`
     : ''
 
   const taskSection = currentTaskId
     ? `
-- 当前任务ID: ${currentTaskId}。你可以使用 get_task_info 工具查询当前任务的详细信息。如果不提供 task_id 参数，工具会自动使用当前上下文中的任务ID。
-  注意：在调用 get_task_info 之前，请先检查对话历史中是否已经包含该任务的信息。`
+- 当前任务ID: ${currentTaskId}。你可以使用相关工具查询当前任务的详细信息。
+  注意：在调用工具之前，请先检查对话历史中是否已经包含该任务的信息。`
     : ''
 
   const contextSection =
@@ -27,47 +35,173 @@ export function generateSystemMessage(
 当前上下文：${resourceSection}${taskSection}`
       : ''
 
-  return `你是一个专业的文档解析和分析专家，擅长理解和分析各种类型的文档内容。
-
-## 系统功能说明
-
-本系统是一个**转写管理系统**，主要功能包括：
-
-### 转写资源（Transcription Resource）
-- **定义**：转写资源是指需要进行转写的音频或视频文件
-- **类型**：
-  - 音频资源（audio）：直接是音频文件
-  - 视频资源（video）：视频文件，系统会自动提取音频进行转写
-- **状态**：pending（待处理）、processing（处理中）、completed（已完成）、failed（失败）
-- **用途**：转写资源是转写任务的基础，一个资源可以创建多个转写任务
-
-### 转写任务（Transcription Task）
-- **定义**：转写任务是对转写资源执行转写操作的具体任务
-- **关联**：每个转写任务都关联一个转写资源（resource_id）
-- **状态**：pending（待处理）、running（运行中）、completed（已完成）、failed（失败）
-- **结果**：转写完成后会生成转写结果（通常是 SRT 字幕文件）
-- **用途**：用户可以对同一个资源创建多个转写任务，使用不同的参数或模型进行转写
-
-### 可用工具
-- get_resource_info：获取单个转写资源的详细信息（需要提供 resource_id，如果不提供则使用当前上下文中的资源ID）
-- get_task_info：获取单个转写任务的详细信息（需要提供 task_id，如果不提供则使用当前上下文中的任务ID）
-- search_resources：搜索转写资源（提供 keyword 参数进行搜索，如果不提供 keyword 或 keyword 为空则返回所有资源）
-
-重要提示 - 转写结果输出策略：
-转写结果的内容通常较长较大，在输出时请遵循以下原则：
-- **默认行为**：除非用户明确要求返回完整原始内容，否则不要将转写结果的原始内容全部输出
-- **推荐做法**：对于较长的转写内容，应该：
-  - 提供摘要、总结或关键信息提取
-  - 只输出相关的片段或部分内容
-  - 使用统计信息、概览或分析结果代替完整内容
-- **特殊情况**：只有当用户明确要求"返回完整内容"、"显示全部转写结果"、"输出原始文本"等类似表述时，才返回完整的转写内容
+  return `你是一个专业的 AI 助手，擅长理解和分析各种类型的内容。
 
 重要提示 - 工具调用策略：
 在调用任何工具之前，请先仔细检查对话历史中是否已经包含了所需的信息。
-- 如果对话历史中已经有相关信息（例如之前通过工具调用获取的资源信息、任务信息等），请直接使用这些信息，避免重复调用工具。
+- 如果对话历史中已经有相关信息，请直接使用这些信息，避免重复调用工具。
 - 只有在以下情况下才需要调用工具：
   1. 对话历史中完全没有所需的信息
   2. 对话历史中的信息可能已经过时，需要获取最新数据
-  3. 用户明确要求重新获取或刷新信息
-- 在决定调用工具时，请先简要说明为什么需要调用工具（例如："对话历史中没有该资源的信息，需要调用工具获取"）。${contextSection}`
+  3. 用户明确要求重新获取或刷新信息${contextSection}`
+}
+
+/**
+ * ReAct 阶段类型
+ */
+export type ReActPhase = 'thought' | 'action' | 'observation'
+
+/**
+ * 生成 ReAct 思考阶段的系统消息
+ * 分析用户问题，决定下一步行动
+ */
+export function generateThoughtPrompt(
+  currentResourceId?: string | null,
+  currentTaskId?: string | null,
+  tools?: ToolInfo[],
+): string {
+  const baseSystemMessage = generateSystemMessage(currentResourceId, currentTaskId)
+  
+  const toolsSection = tools && tools.length > 0
+    ? `
+
+## 可用工具
+${tools.map(t => `- ${t.name}: ${t.description}`).join('\n')}`
+    : ''
+
+  return `${baseSystemMessage}
+${toolsSection}
+
+## 当前阶段：思考
+
+你需要分析当前情况，决定下一步应该做什么。
+
+如果对话历史中有"观察"和"建议"，请参考建议来决定下一步行动。
+
+### 输出格式
+
+根据情况选择以下两种格式之一：
+
+**格式1 - 需要继续执行行动（调用工具或分析）：**
+
+**思考** [你的分析过程]
+
+<agent_meta>
+{"nextAction": "工具名称或analyze", "shouldContinue": true, "reason": "原因"}
+</agent_meta>
+
+**格式2 - 直接回答用户（结束循环）：**
+
+**思考** [简要说明为什么可以回答了]
+
+**回答** [你对用户问题的完整回答]
+
+<agent_meta>
+{"nextAction": "answer", "shouldContinue": false, "reason": "原因"}
+</agent_meta>
+
+### nextAction 可选值
+
+- 工具名称（如 get_resource_info）：需要调用工具获取数据
+- answer：直接回答用户（此时必须在 agent_meta 前输出完整回答）
+- analyze：需要对已有信息进行分析
+
+### 示例
+
+**示例1 - 需要调用工具：**
+
+**思考** 用户询问任务信息，需要先获取数据。
+
+<agent_meta>
+{"nextAction": "get_task_info", "shouldContinue": true, "reason": "需要获取任务详情"}
+</agent_meta>
+
+**示例2 - 直接回答用户：**
+
+**思考** 已获得足够信息，可以回答用户。
+
+**回答** 根据查询结果，该任务的状态是已完成，转写内容主要讨论了...
+
+<agent_meta>
+{"nextAction": "answer", "shouldContinue": false, "reason": "信息充足"}
+</agent_meta>`
+}
+
+/**
+ * 生成 ReAct 行动阶段的系统消息
+ * 执行具体的行动（分析或回答）
+ */
+export function generateActionPrompt(
+  actionType: string,
+  currentResourceId?: string | null,
+  currentTaskId?: string | null,
+): string {
+  const baseSystemMessage = generateSystemMessage(currentResourceId, currentTaskId)
+
+  if (actionType === 'answer') {
+    return `${baseSystemMessage}
+
+## 当前阶段：行动 - 回答用户
+
+根据已有信息，直接回答用户的问题。
+
+### 输出格式
+
+**行动** Answer
+[你的回答内容]`
+  }
+
+  if (actionType === 'analyze') {
+    return `${baseSystemMessage}
+
+## 当前阶段：行动 - 分析
+
+对已有的信息进行分析和总结。
+
+### 输出格式
+
+**行动** Analyze
+[你的分析内容]`
+  }
+
+  // 工具调用
+  return `${baseSystemMessage}
+
+## 当前阶段：行动 - 调用工具
+
+你需要调用 ${actionType} 工具来获取信息。
+
+### 输出格式
+
+**行动** ${actionType}
+[简要说明正在执行的操作]
+
+然后调用 ${actionType} 工具。`
+}
+
+/**
+ * 生成 ReAct 观察阶段的系统消息
+ * 简短总结工具返回的结果，并给出下一步建议
+ */
+export function generateObservationPrompt(): string {
+  return `## 当前阶段：观察
+
+请总结工具返回的结果，并给出下一步建议。
+
+### 输出格式
+
+**观察** [简短总结结果，1-2句话]
+
+**建议** [下一步应该做什么：继续调用其他工具、进行分析、还是直接回答用户]`
+}
+
+/**
+ * 生成 ReAct 模式的系统消息（兼容旧版本）
+ */
+export function generateReActSystemMessage(
+  currentResourceId?: string | null,
+  currentTaskId?: string | null,
+  tools?: ToolInfo[],
+): string {
+  return generateThoughtPrompt(currentResourceId, currentTaskId, tools)
 }

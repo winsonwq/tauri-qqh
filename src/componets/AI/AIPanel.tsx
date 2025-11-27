@@ -4,6 +4,7 @@ import { useChatManagement } from '../../hooks/useChatManagement'
 import { useStickyMessages } from '../../hooks/useStickyMessages'
 import { useStreamResponse } from '../../hooks/useStreamResponse'
 import { useToolCalls } from '../../hooks/useToolCalls'
+import { useReActAgent } from '../../hooks/useReActAgent'
 import { runAgentWorkflow, AgentWorkflowController } from '../../hooks/useAgentWorkflow'
 import { invoke } from '@tauri-apps/api/core'
 import AIMessageInput, { AIMode } from './AIMessageInput'
@@ -11,12 +12,7 @@ import { ToolCall } from './ToolCallConfirmModal'
 import { MessageItem } from './MessageItem'
 import { ChatBar } from './ChatBar'
 import { EmptyState } from './EmptyState'
-import {
-  AIMessage,
-  generateEventId,
-  convertAIMessagesToChatMessages,
-} from '../../utils/aiMessageUtils'
-import { getAvailableTools } from '../../utils/toolUtils'
+import { AIMessage } from '../../utils/aiMessageUtils'
 import { useMessage } from '../Toast'
 import { useAppSelector } from '../../redux/hooks'
 import { generateSystemMessage } from '../../utils/aiUtils'
@@ -33,7 +29,7 @@ const AIPanel = () => {
   const mcpServers = useAppSelector((state) => state.mcp.servers)
   const { currentResourceId, currentTaskId } = useAppSelector((state) => state.aiContext)
   const [selectedConfigId, setSelectedConfigId] = useState<string>('')
-  const [mode, setMode] = useState<AIMode>('agents')
+  const [mode, setMode] = useState<AIMode>('ask')
   const isStoppedRef = useRef<boolean>(false)
   const workflowControllerRef = useRef<AgentWorkflowController | null>(null)
 
@@ -127,6 +123,27 @@ const AIPanel = () => {
     setIsStreaming,
   })
 
+  // ReAct Agent 处理 (Ask 模式)
+  const {
+    isStreaming: isReActStreaming,
+    currentPhase: reactPhase,
+    currentIteration: reactIteration,
+    startReActAgent,
+    stopReActAgent,
+    continueAfterToolConfirm: continueReActAfterToolConfirm,
+  } = useReActAgent({
+    selectedConfigId,
+    currentChatId: currentChat?.id,
+    currentResourceId,
+    currentTaskId,
+    messagesRef,
+    updateMessages,
+    mcpServers,
+  })
+
+  // 合并流式状态
+  const effectiveIsStreaming = isStreaming || isReActStreaming
+
   // 从 Redux store 中获取 AI 配置，并设置默认选中的配置
   useEffect(() => {
     if (configs.length > 0 && !selectedConfigId) {
@@ -134,11 +151,11 @@ const AIPanel = () => {
     }
   }, [configs, selectedConfigId])
 
-  // 处理发送消息 - Ask 模式（单次 AI 问答）
+  // 处理发送消息 - Ask 模式（ReAct 循环模式）
   const handleSendAsk = useCallback(
     async (messageText: string, configId?: string) => {
       // 防止重复调用
-      if (isStreaming) {
+      if (effectiveIsStreaming) {
         return
       }
 
@@ -187,42 +204,14 @@ const AIPanel = () => {
         console.error('保存用户消息失败:', err)
       }
 
+      // 启动 ReAct Agent 循环
       try {
-        setIsStreaming(true)
-
-        // 获取当前消息列表（包含刚添加的用户消息）
-        const currentMessages = messagesRef.current
-        const chatMessages = convertAIMessagesToChatMessages(currentMessages)
-        const tools = getAvailableTools(mcpServers)
-
-        // 生成 eventId
-        const eventId = generateEventId()
-        setCurrentStreamEventId(eventId)
-
-        // 先设置监听器，然后再调用后端
-        await startStreamResponse(
-          eventId,
-          chatId!,
-          updateMessages,
-          executeToolCallsAndContinue,
-          mcpServers,
-        )
-
-        // 调用流式 API
-        await invoke<string>('chat_completion', {
-          configId: effectiveConfigId,
-          messages: chatMessages,
-          tools: tools.length > 0 ? tools : null,
-          systemMessage: systemMessage,
-          eventId: eventId,
-        })
+        await startReActAgent(chatId!)
       } catch (err) {
-        console.error('AI 对话失败:', err)
+        console.error('ReAct Agent 执行失败:', err)
         if (!isStoppedRef.current) {
           message.error(`AI 对话失败: ${err}`)
         }
-        setIsStreaming(false)
-        setCurrentStreamEventId(null)
       }
     },
     [
@@ -230,15 +219,9 @@ const AIPanel = () => {
       currentChat,
       handleCreateChat,
       updateMessages,
-      messagesRef,
-      mcpServers,
-      systemMessage,
-      setIsStreaming,
-      setCurrentStreamEventId,
-      startStreamResponse,
-      executeToolCallsAndContinue,
+      startReActAgent,
       message,
-      isStreaming,
+      effectiveIsStreaming,
     ],
   )
 
@@ -246,7 +229,7 @@ const AIPanel = () => {
   const handleSendAgents = useCallback(
     async (messageText: string, configId?: string) => {
       // 防止重复调用
-      if (isStreaming) {
+      if (effectiveIsStreaming) {
         return
       }
 
@@ -375,9 +358,17 @@ const AIPanel = () => {
           return msg
         })
       )
-      await executeToolCallsAndContinue(toolCalls)
+      
+      // 根据模式选择不同的继续执行方式
+      if (mode === 'ask' && currentChat?.id) {
+        // Ask 模式使用 ReAct 继续执行
+        await continueReActAfterToolConfirm(toolCalls, currentChat.id)
+      } else {
+        // Agents 模式使用原有的工具调用继续
+        await executeToolCallsAndContinue(toolCalls)
+      }
     },
-    [updateMessages, executeToolCallsAndContinue],
+    [updateMessages, executeToolCallsAndContinue, continueReActAfterToolConfirm, mode, currentChat],
   )
 
   const handleToolCallCancel = useCallback(
@@ -403,7 +394,10 @@ const AIPanel = () => {
       workflowControllerRef.current = null
     }
 
-    // 同时停止单独的流式请求（Ask 模式）
+    // 停止 ReAct Agent（Ask 模式）
+    await stopReActAgent()
+
+    // 同时停止单独的流式请求
     if (currentStreamEventId) {
       try {
         await invoke('stop_chat_completion', { eventId: currentStreamEventId })
@@ -414,7 +408,7 @@ const AIPanel = () => {
 
     setIsStreaming(false)
     setCurrentStreamEventId(null)
-  }, [currentStreamEventId, setIsStreaming, setCurrentStreamEventId])
+  }, [currentStreamEventId, setIsStreaming, setCurrentStreamEventId, stopReActAgent])
 
   // 使用 AI 总结 chat 标题
   const handleSummarizeTitle = useCallback(async () => {
@@ -582,7 +576,7 @@ const AIPanel = () => {
                   onRef={(el) => setMessageRef(message.id, el)}
                   onToolCallConfirm={handleToolCallConfirm}
                   onToolCallCancel={handleToolCallCancel}
-                  isStreaming={isStreaming}
+                  isStreaming={effectiveIsStreaming}
                   isLastAssistantMessage={isLastAssistantMessage}
                 />
               )
@@ -596,7 +590,7 @@ const AIPanel = () => {
       <div className="flex-shrink-0 p-3">
         <AIMessageInput
           onSend={handleSend}
-          isStreaming={isStreaming}
+          isStreaming={effectiveIsStreaming}
           onStop={handleStop}
           mode={mode}
           onModeChange={setMode}

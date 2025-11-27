@@ -29,7 +29,7 @@ const AIMessageInput = ({
   placeholder = '在这里输入消息，按 Enter 发送...',
   isStreaming = false,
   onStop,
-  mode = 'agents',
+  mode = 'ask',
   onModeChange,
 }: AIMessageInputProps) => {
   const [selectedConfigId, setSelectedConfigId] = useState<string>('')

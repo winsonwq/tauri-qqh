@@ -341,11 +341,9 @@ export const MessageItem: React.FC<MessageItemProps> = ({
         {message.content &&
           (message.role === 'tool' ? (
             <div className="mt-2">
-              {message.name && (
-                <div className="text-xs font-semibold text-base-content/70 mb-2">
-                  工具: {message.name}
-                </div>
-              )}
+              <div className="text-xs font-semibold text-base-content/70 mb-2">
+                {message.name && <span>工具: {message.name}</span>}
+              </div>
               <div className="bg-base-200 rounded-lg p-3 border border-base-300">
                 <ToolResultDisplay
                   items={parseToolResultContent(message.content)}
