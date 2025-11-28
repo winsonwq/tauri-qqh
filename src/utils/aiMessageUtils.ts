@@ -1,4 +1,4 @@
-import { ToolCall } from '../componets/AI/ToolCallConfirmModal'
+import { ToolCall } from '../components/AI/ToolCallConfirmModal'
 import { Message as ChatMessage } from '../models'
 import { AgentType, AgentAction } from '../agents/agentTypes'
 import { parsePartialJson } from './partialJsonParser'

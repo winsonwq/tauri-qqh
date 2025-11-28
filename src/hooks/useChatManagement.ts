@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Chat, ChatListItem, Message as ChatMessage } from '../models'
 import { convertChatMessageToAIMessage, AIMessage } from '../utils/aiMessageUtils'
-import { useMessage } from '../componets/Toast'
+import { useMessage } from '../components/Toast'
 
 export function useChatManagement() {
   const message = useMessage()

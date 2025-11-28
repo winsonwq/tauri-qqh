@@ -1,7 +1,7 @@
 import "./App.css";
-import Layout from "./componets/Layout";
-import { ToastProvider } from "./componets/Toast";
-import ToastContainer from "./componets/Toast/ToastContainer";
+import Layout from "./components/Layout";
+import { ToastProvider } from "./components/Toast";
+import ToastContainer from "./components/Toast/ToastContainer";
 
 function App() {
   return (

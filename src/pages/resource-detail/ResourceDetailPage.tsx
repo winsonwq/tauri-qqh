@@ -6,7 +6,7 @@ import { useAppDispatch, useAppSelector } from '../../redux/hooks';
 import { setCurrentPage } from '../../redux/slices/featureKeysSlice';
 import { setExtracting } from '../../redux/slices/videoExtractionSlice';
 import { setContext, clearContext } from '../../redux/slices/aiContextSlice';
-import { useMessage } from '../../componets/Toast';
+import { useMessage } from '../../components/Toast';
 import {
   TranscriptionTask,
   TranscriptionTaskStatus,
@@ -17,11 +17,11 @@ import ResourceInfoCard from './components/ResourceInfoCard';
 import TranscriptionHistory from './components/TranscriptionHistory';
 import LoadingCard from './components/LoadingCard';
 import CreateTranscriptionTaskModal from './components/CreateTranscriptionTaskModal';
-import DeleteConfirmModal from '../../componets/DeleteConfirmModal';
+import DeleteConfirmModal from '../../components/DeleteConfirmModal';
 import useResourceMedia from './hooks/useResourceMedia';
 import useTranscriptionTaskRuntime from './hooks/useTranscriptionTaskRuntime';
 import useTranscriptionTasksManager from './hooks/useTranscriptionTasksManager';
-import { PlayerRef } from '../../componets/Player';
+import { PlayerRef } from '../../components/Player';
 
 const ResourceDetailPage = () => {
   const dispatch = useAppDispatch();

@@ -1,7 +1,7 @@
 import { TranscriptionResource } from '../../../models'
 import { HiFolder, HiClock, HiTrash } from 'react-icons/hi2'
-import Tooltip from '../../../componets/Tooltip'
-import ResourceNameWithIcon from '../../../componets/ResourceNameWithIcon'
+import Tooltip from '../../../components/Tooltip'
+import ResourceNameWithIcon from '../../../components/ResourceNameWithIcon'
 import { formatDateTime } from '../../../utils/format'
 
 interface ResourceCardProps {

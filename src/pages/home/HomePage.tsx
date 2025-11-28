@@ -6,8 +6,8 @@ import { setCurrentPage } from '../../redux/slices/featureKeysSlice';
 import { TranscriptionResource } from '../../models';
 import { HiPlus, HiDocumentText } from 'react-icons/hi2';
 import ResourceCard from './components/ResourceCard';
-import DeleteConfirmModal from '../../componets/DeleteConfirmModal';
-import { useMessage } from '../../componets/Toast';
+import DeleteConfirmModal from '../../components/DeleteConfirmModal';
+import { useMessage } from '../../components/Toast';
 
 const HomePage = () => {
   const dispatch = useAppDispatch();

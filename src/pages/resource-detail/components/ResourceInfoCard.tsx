@@ -1,5 +1,5 @@
 import { memo, useMemo, RefObject } from 'react'
-import Player, { PlayerRef } from '../../../componets/Player'
+import Player, { PlayerRef } from '../../../components/Player'
 import { TranscriptionResource, ResourceType } from '../../../models'
 import { useAppSelector } from '../../../redux/hooks'
 

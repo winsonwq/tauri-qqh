@@ -1,8 +1,8 @@
 import { useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { AIMessage, convertAIMessagesToChatMessages, generateEventId } from '../utils/aiMessageUtils'
-import { ToolCall } from '../componets/AI/ToolCallConfirmModal'
-import { useMessage } from '../componets/Toast'
+import { ToolCall } from '../components/AI/ToolCallConfirmModal'
+import { useMessage } from '../components/Toast'
 import { findToolServer, getAvailableTools } from '../utils/toolUtils'
 import { MCPServerInfo } from '../models'
 

@@ -10,11 +10,11 @@ import { HiDocumentText, HiInformationCircle, HiTrash, HiStop, HiArrowDownTray }
 import { getStatusText } from './transcriptionUtils';
 import TranscriptionJsonView from './TranscriptionJsonView';
 import TranscriptionInfoModal from './TranscriptionInfoModal';
-import DeleteConfirmModal from '../../../componets/DeleteConfirmModal';
+import DeleteConfirmModal from '../../../components/DeleteConfirmModal';
 import { convertToSRT } from '../../../utils/srtConverter';
-import { useMessage } from '../../../componets/Toast';
-import Select from '../../../componets/Select';
-import { PlayerRef } from '../../../componets/Player';
+import { useMessage } from '../../../components/Toast';
+import Select from '../../../components/Select';
+import { PlayerRef } from '../../../components/Player';
 
 interface TranscriptionHistoryProps {
   tasks: TranscriptionTask[];

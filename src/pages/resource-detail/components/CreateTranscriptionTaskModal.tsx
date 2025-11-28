@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { TranscriptionParams, ModelInfo } from '../../../models';
-import Select from '../../../componets/Select';
+import Select from '../../../components/Select';
 
 interface CreateTranscriptionTaskModalProps {
   isOpen: boolean;

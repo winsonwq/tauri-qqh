@@ -1,5 +1,5 @@
 import { MCPServerInfo, MCPTool } from '../models'
-import { ToolCall } from '../componets/AI/ToolCallConfirmModal'
+import { ToolCall } from '../components/AI/ToolCallConfirmModal'
 
 /**
  * 获取可用的 MCP 工具（只返回 enabled 为 true 的服务器工具）
