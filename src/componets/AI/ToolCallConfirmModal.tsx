@@ -1,11 +1,7 @@
-export interface ToolCall {
-  id: string
-  type: string
-  function: {
-    name: string
-    arguments: string
-  }
-}
+import { ToolCall } from '../../react-framework/core/types'
+
+// 重新导出 ToolCall，保持向后兼容
+export type { ToolCall }
 
 interface ToolCallConfirmModalProps {
   isOpen: boolean

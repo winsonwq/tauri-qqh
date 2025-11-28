@@ -29,7 +29,7 @@ const getMessageContainerClasses = (
   role: 'user' | 'assistant' | 'tool',
   isSticky: boolean,
 ) => {
-  const baseClasses = 'border-b border-base-200'
+  const baseClasses = ''
   if (role === 'user') {
     return `${baseClasses} p-2 bg-gradient-to-b from-base-100 via-base-100 to-transparent ${
       isSticky ? `sticky z-10` : ''
