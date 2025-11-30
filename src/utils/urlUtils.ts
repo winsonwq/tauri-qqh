@@ -80,9 +80,11 @@ export function extractResourceNameFromUrl(url: string): string {
  * 将视频 URL 转换为嵌入 URL
  * @param url 原始视频 URL
  * @param startTime 起始播放时间（秒），可选
+ * @param autoplay 是否自动播放，默认 false
+ * @param mute 是否静音，默认 false。注意：大多数浏览器要求静音才能自动播放
  * @returns 嵌入 URL，如果无法转换则返回 null
  */
-export function convertToEmbedUrl(url: string, startTime?: number): string | null {
+export function convertToEmbedUrl(url: string, startTime?: number, autoplay: boolean = false, mute: boolean = false): string | null {
   const platform = detectUrlPlatform(url);
   
   if (platform === Platform.YOUTUBE) {
@@ -102,7 +104,7 @@ export function convertToEmbedUrl(url: string, startTime?: number): string | nul
       // 从现有 URL 中提取时间参数
       const existingTimeMatch = url.match(/[?&]start=(\d+)/);
       if (existingTimeMatch) {
-        timeParam = `&start=${existingTimeMatch[1]}`;
+        timeParam = `?start=${existingTimeMatch[1]}`;
       }
     }
     
@@ -123,18 +125,39 @@ export function convertToEmbedUrl(url: string, startTime?: number): string | nul
     }
     
     if (videoId) {
+      // 构建查询参数
+      const params = new URLSearchParams();
+      
       // 优先使用传入的 startTime，否则从 URL 中提取
       if (startTime !== undefined) {
-        timeParam = `&start=${Math.floor(startTime)}`;
-      } else if (!timeParam) {
+        params.set('start', Math.floor(startTime).toString());
+      } else if (timeParam) {
+        // 从现有 timeParam 中提取 start 值
+        const existingStartMatch = timeParam.match(/[?&]start=(\d+)/);
+        if (existingStartMatch) {
+          params.set('start', existingStartMatch[1]);
+        }
+      } else {
         // 从原始 URL 中提取时间参数
         const timeMatch = url.match(/[?&]t=(\d+)s?/);
         if (timeMatch) {
-          timeParam = `&start=${timeMatch[1]}`;
+          params.set('start', timeMatch[1]);
         }
       }
       
-      return `https://www.youtube.com/embed/${videoId}${timeParam}`;
+      // 如果设置了自动播放，添加 autoplay 参数
+      if (autoplay) {
+        params.set('autoplay', '1');
+      }
+      
+      // 如果设置了静音，添加 mute 参数
+      // 注意：大多数浏览器要求静音才能自动播放，所以如果 autoplay=true，建议同时设置 mute=true
+      if (mute) {
+        params.set('mute', '1');
+      }
+      
+      const queryString = params.toString();
+      return `https://www.youtube.com/embed/${videoId}${queryString ? '?' + queryString : ''}`;
     }
   } else if (platform === Platform.BILIBILI) {
     // Bilibili URL 转换
@@ -208,4 +231,5 @@ export function convertToEmbedUrl(url: string, startTime?: number): string | nul
   // 如果无法转换，返回 null
   return null;
 }
+
 

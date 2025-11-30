@@ -3645,6 +3645,7 @@ fn subtitle_time_to_seconds(time_str: &str) -> Result<f64, String> {
 }
 
 // 将SRT时间戳转换为秒数（浮点数）- 保持向后兼容
+#[allow(dead_code)]
 fn srt_time_to_seconds(time_str: &str) -> Result<f64, String> {
     subtitle_time_to_seconds(time_str)
 }

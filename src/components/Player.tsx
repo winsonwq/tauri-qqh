@@ -86,10 +86,10 @@ const Player = memo(
     // 检测是否是 URL 资源
     const isUrlResource = useMemo(() => isUrl(src), [src])
     
-    // 如果是 URL 资源，转换为嵌入 URL（初始状态，不包含时间参数）
+    // 如果是 URL 资源，转换为嵌入 URL（初始状态，不包含时间参数，不自动播放）
     const initialEmbedUrl = useMemo(() => {
       if (isUrlResource && type === 'video') {
-        return convertToEmbedUrl(src)
+        return convertToEmbedUrl(src, undefined, false)
       }
       return null
     }, [isUrlResource, src, type])
@@ -106,8 +106,11 @@ const Player = memo(
     useImperativeHandle(ref, () => ({
       seek: (time: number) => {
         if (isUrlResource && type === 'video') {
-          // URL 资源：通过更新 iframe src 来 seek（添加时间参数）
-          const newEmbedUrl = convertToEmbedUrl(src, time)
+          // URL 资源：通过更新 iframe src 来 seek（添加时间参数和自动播放）
+          // 传入 autoplay=true 使 seek 后自动播放
+          // 注意：不传入 mute，让视频尝试有声音自动播放
+          // 如果浏览器阻止，用户需要手动点击播放
+          const newEmbedUrl = convertToEmbedUrl(src, time, true, false)
           if (newEmbedUrl) {
             setEmbedUrl(newEmbedUrl)
           }
@@ -219,9 +222,14 @@ const Player = memo(
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                 allowFullScreen
                 title="视频播放器"
+                referrerPolicy="no-referrer-when-downgrade"
                 onLoad={() => {
                   // iframe 加载成功
                   console.log('视频 iframe 加载成功')
+                }}
+                onError={(e) => {
+                  // iframe 加载失败
+                  console.error('视频 iframe 加载失败:', e)
                 }}
               />
             </div>
