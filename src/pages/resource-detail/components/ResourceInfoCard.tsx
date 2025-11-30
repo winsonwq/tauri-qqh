@@ -2,6 +2,7 @@ import { memo, useMemo, RefObject } from 'react'
 import Player, { PlayerRef } from '../../../components/Player'
 import { TranscriptionResource, ResourceType } from '../../../models'
 import { useAppSelector } from '../../../redux/hooks'
+import { EditableInput } from '../../../components/EditableInput'
 
 interface ResourceInfoCardProps {
   resource: TranscriptionResource
@@ -11,6 +12,7 @@ interface ResourceInfoCardProps {
   onAudioError: (error: string) => void
   onVideoError: (error: string) => void
   playerRef?: RefObject<PlayerRef | null>
+  onUpdateName?: (newName: string) => Promise<void>
 }
 
 const ResourceInfoCard = memo(({
@@ -21,6 +23,7 @@ const ResourceInfoCard = memo(({
   onAudioError,
   onVideoError,
   playerRef,
+  onUpdateName,
 }: ResourceInfoCardProps) => {
   const extractionState = useAppSelector(
     (state) => state.videoExtraction.extractions[resource.id]
@@ -96,9 +99,19 @@ const ResourceInfoCard = memo(({
       <div className="space-y-1.5">
         <div className="flex items-start justify-between gap-2">
           <div className="flex flex-col gap-1 text-base-content break-words flex-1 min-w-0">
-            <span className="font-semibold text-xl truncate block tooltip tooltip-top">
-              {resource.name}
-            </span>
+            {onUpdateName ? (
+              <EditableInput
+                value={resource.name}
+                onSave={onUpdateName}
+                displayClassName="font-semibold text-xl truncate block"
+                tooltip="点击编辑标题"
+                className="w-full"
+              />
+            ) : (
+              <span className="font-semibold text-xl truncate block tooltip tooltip-top">
+                {resource.name}
+              </span>
+            )}
             <div className="text-xs text-base-content/60 break-all">
               <span
                 className="truncate block tooltip tooltip-top"

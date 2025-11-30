@@ -7,6 +7,7 @@ import { setCurrentPage } from '../../redux/slices/featureKeysSlice';
 import { setExtracting } from '../../redux/slices/videoExtractionSlice';
 import { setContext, clearContext } from '../../redux/slices/aiContextSlice';
 import { useMessage } from '../../components/Toast';
+import { EditableInput } from '../../components/EditableInput';
 import {
   TranscriptionTask,
   TranscriptionTaskStatus,
@@ -257,6 +258,24 @@ const ResourceDetailPage = () => {
     }
   };
 
+  // 更新资源名称
+  const handleUpdateResourceName = useCallback(async (newName: string) => {
+    if (!resourceId) return;
+    try {
+      await invoke('update_resource_name', {
+        resourceId: resourceId,
+        name: newName,
+      });
+      message.success('资源名称已更新');
+      // 刷新资源数据
+      await refreshResource();
+    } catch (err) {
+      console.error('更新资源名称失败:', err);
+      message.error(err instanceof Error ? err.message : '更新资源名称失败');
+      throw err; // 重新抛出错误，让 EditableInput 保持编辑状态
+    }
+  }, [resourceId, refreshResource, message]);
+
   // 创建转写任务（从弹窗确认后调用）
   const handleCreateTask = async (params: TranscriptionParams) => {
     if (!resourceId) return;
@@ -490,9 +509,15 @@ const ResourceDetailPage = () => {
           >
             <HiArrowLeft className="w-5 h-5" />
           </button>
-          <h1 className="text-lg font-semibold truncate flex-1" title={resource.name}>
-            {resource.name}
-          </h1>
+          <div className="flex-1 min-w-0">
+            <EditableInput
+              value={resource.name}
+              onSave={handleUpdateResourceName}
+              displayClassName="text-lg font-semibold truncate"
+              tooltip="点击编辑标题"
+              className="w-full"
+            />
+          </div>
           <button
             className="btn btn-sm btn-error btn-ghost"
             onClick={() => setShowDeleteModal(true)}
@@ -514,6 +539,7 @@ const ResourceDetailPage = () => {
             onAudioError={(error: string) => message.error(error)}
             onVideoError={(error: string) => message.error(error)}
             playerRef={playerRef}
+            onUpdateName={handleUpdateResourceName}
           />
         </div>
 

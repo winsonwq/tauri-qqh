@@ -1417,6 +1417,39 @@ async fn delete_transcription_resource(
     .map_err(|e| format!("数据库操作失败: {}", e))?
 }
 
+// 更新转写资源名称
+#[tauri::command]
+async fn update_resource_name(
+    resource_id: String,
+    name: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let db_path = db::get_db_path(&app_data_dir);
+    
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let conn = db::init_database(&db_path)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        
+        let mut resource = db::get_resource(&conn, &resource_id)
+            .map_err(|e| format!("无法获取资源: {}", e))?
+            .ok_or_else(|| "资源不存在".to_string())?;
+        
+        resource.name = name;
+        resource.updated_at = Utc::now().to_rfc3339();
+        
+        db::update_resource(&conn, &resource)
+            .map_err(|e| format!("无法更新资源: {}", e))?;
+        
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))?
+    .map_err(|e| e)?;
+    
+    Ok(())
+}
+
 // 删除转写任务
 #[tauri::command]
 async fn delete_transcription_task(
@@ -3918,6 +3951,7 @@ pub fn run() {
             get_transcription_tasks,
             get_transcription_task,
             delete_transcription_resource,
+            update_resource_name,
             delete_transcription_task,
             read_transcription_result,
             check_fast_whisper_status,
