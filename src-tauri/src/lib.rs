@@ -905,6 +905,13 @@ async fn execute_transcription_task(
             Err(e) => {
                 eprintln!("字幕下载失败: {}", e);
                 let _ = app.emit(&stderr_event_name, &format!("字幕下载失败: {}\n", e));
+                
+                // 如果错误是"任务已被用户停止"，说明 stop_transcription_task 已经更新了任务状态
+                // 不需要再次更新，直接返回
+                if e == "任务已被用户停止" {
+                    return Err(e);
+                }
+                
                 // 对于URL资源，如果字幕获取失败，返回错误（不尝试whisper转写）
                 task.status = "failed".to_string();
                 task.error = Some(format!("无法从URL获取字幕: {}。请确保视频有字幕且yt-dlp已正确安装。", e));
@@ -3466,6 +3473,10 @@ async fn download_subtitle_from_url_internal(
         let stderr = child.stderr.take()
             .ok_or("无法获取 stderr 句柄")?;
         
+        // 将进程句柄存储到 RunningTasks 中，以便可以停止
+        let running_tasks: State<'_, RunningTasks> = app.state();
+        running_tasks.insert(task_id.clone(), child).await;
+        
         // 使用辅助函数并发读取 stdout 和 stderr，实时发送事件
         let stdout_handle = spawn_stream_reader(
             stdout,
@@ -3484,8 +3495,42 @@ async fn download_subtitle_from_url_internal(
         );
         
         // 等待进程完成
-        let status = child.wait().await
-            .map_err(|e| format!("等待 yt-dlp 进程失败: {}", e))?;
+        // 注意：child 已经存储在 RunningTasks 中，stop_transcription_task 可以访问它
+        // 我们需要定期检查进程状态，如果 child 不在 RunningTasks 中，说明任务已被停止
+        let running_tasks_clone: State<'_, RunningTasks> = app.state();
+        
+        // 使用标志变量标记任务是否被停止
+        let mut was_stopped = false;
+        
+        // 使用循环定期检查进程状态
+        let status = loop {
+            // 检查 child 是否还在 RunningTasks 中
+            if let Some(child_arc) = running_tasks_clone.get(task_id).await {
+                // 尝试等待进程完成（非阻塞）
+                let mut child_guard = child_arc.lock().await;
+                if let Ok(Some(exit_status)) = child_guard.try_wait() {
+                    // 进程已完成，从 RunningTasks 中移除
+                    let _ = running_tasks_clone.remove(task_id).await;
+                    break exit_status;
+                }
+                // 释放锁，等待一段时间后重试
+                drop(child_guard);
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            } else {
+                // child 不在 RunningTasks 中，说明任务已被停止
+                was_stopped = true;
+                // 返回一个表示被中断的退出码
+                break std::process::ExitStatus::from_raw(130); // SIGINT 退出码
+            }
+        };
+        
+        // 检查进程是否被停止
+        // 如果被停止，直接返回错误，不需要继续处理
+        if was_stopped {
+            // 进程被用户停止，直接返回错误
+            // 不需要等待 stdout 和 stderr 的输出，因为任务已经被停止
+            return Err("任务已被用户停止".to_string());
+        }
         
         // 获取 stdout 和 stderr 的输出
         let stdout_output = stdout_handle.await
