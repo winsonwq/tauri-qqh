@@ -47,8 +47,10 @@ export function generateSystemMessage(
 - 只有在以下情况下才需要调用工具：
   1. 对话历史中完全没有所需的信息
   2. 对话历史中的信息可能已经过时，需要获取最新数据
-  3. 用户明确要求重新获取或刷新信息${contextSection}`
+  3. 用户明确要求重新获取或刷新信息${contextSection}
+`
 }
+
 
 // ReAct 相关功能已迁移到 react-framework
 // 请使用 react-framework 中的 ReActPromptManager 和 ReActWorkflowEngine

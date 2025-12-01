@@ -2843,7 +2843,207 @@ async fn chat_completion(
                 }
             }
         }
-        eprintln!("[AI Stream] 流处理结束");
+        
+        // 流正常结束（没有更多数据）
+        eprintln!("[AI Stream] 流处理结束（没有更多数据）");
+        
+        // 处理剩余的 buffer 内容（如果有）
+        if !buffer.trim().is_empty() {
+            eprintln!("[AI Stream] 处理剩余的 buffer 内容: {}", buffer);
+            // 尝试处理剩余的 buffer（包括没有换行符的最后一行）
+            loop {
+                if buffer.trim().is_empty() {
+                    break;
+                }
+                
+                if let Some(newline_pos) = buffer.find('\n') {
+                    let line = buffer[..newline_pos].trim().to_string();
+                    buffer = buffer[newline_pos + 1..].to_string();
+                    
+                    if line.starts_with("data: ") {
+                        let data = &line[6..];
+                        if data == "[DONE]" {
+                            eprintln!("[AI Stream] 在 buffer 中发现 [DONE]");
+                            break;
+                        }
+                        
+                        // 尝试解析 JSON
+                        if let Ok(chunk_data) = serde_json::from_str::<ai::ChatCompletionChunk>(data) {
+                            if let Some(choice) = chunk_data.choices.first() {
+                                let delta = &choice.delta;
+                                
+                                // 处理内容增量
+                                if let Some(content) = &delta.content {
+                                    if !content.is_empty() {
+                                        let _ = app_clone.emit(&event_name_clone, &json!({
+                                            "type": "content",
+                                            "content": content,
+                                            "event_id": event_id_clone
+                                        }));
+                                    }
+                                }
+                                
+                                // 处理 reasoning
+                                if let Some(reasoning) = &delta.reasoning {
+                                    if !reasoning.is_empty() {
+                                        let _ = app_clone.emit(&event_name_clone, &json!({
+                                            "type": "reasoning",
+                                            "content": reasoning,
+                                            "event_id": event_id_clone
+                                        }));
+                                    }
+                                }
+                                
+                                // 检查 finish_reason
+                                if let Some(finish_reason) = &choice.finish_reason {
+                                    eprintln!("[AI Stream] 在 buffer 中发现 finish_reason: {}", finish_reason);
+                                    if finish_reason == "tool_calls" && !current_tool_calls.is_empty() {
+                                        let tool_calls: Vec<serde_json::Value> = current_tool_calls
+                                            .values()
+                                            .map(|tc| {
+                                                json!({
+                                                    "id": tc.id.as_ref().unwrap_or(&"".to_string()),
+                                                    "type": tc.call_type.as_ref().unwrap_or(&"function".to_string()),
+                                                    "function": {
+                                                        "name": tc.function.as_ref()
+                                                            .and_then(|f| f.name.as_ref())
+                                                            .unwrap_or(&"".to_string()),
+                                                        "arguments": tc.function.as_ref()
+                                                            .and_then(|f| f.arguments.as_ref())
+                                                            .unwrap_or(&"".to_string()),
+                                                    }
+                                                })
+                                            })
+                                            .collect();
+                                        
+                                        let _ = app_clone.emit(&event_name_clone, &json!({
+                                            "type": "tool_calls",
+                                            "tool_calls": tool_calls,
+                                            "event_id": event_id_clone
+                                        }));
+                                        current_tool_calls.clear();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // 处理最后一行（没有换行符）
+                    let line = buffer.trim().to_string();
+                    buffer.clear();
+                    
+                    if line.starts_with("data: ") {
+                        let data = &line[6..];
+                        if data == "[DONE]" {
+                            eprintln!("[AI Stream] 在 buffer 中发现 [DONE]");
+                            break;
+                        }
+                        
+                        // 尝试解析 JSON
+                        if let Ok(chunk_data) = serde_json::from_str::<ai::ChatCompletionChunk>(data) {
+                            if let Some(choice) = chunk_data.choices.first() {
+                                let delta = &choice.delta;
+                                
+                                // 处理内容增量
+                                if let Some(content) = &delta.content {
+                                    if !content.is_empty() {
+                                        let _ = app_clone.emit(&event_name_clone, &json!({
+                                            "type": "content",
+                                            "content": content,
+                                            "event_id": event_id_clone
+                                        }));
+                                    }
+                                }
+                                
+                                // 处理 reasoning
+                                if let Some(reasoning) = &delta.reasoning {
+                                    if !reasoning.is_empty() {
+                                        let _ = app_clone.emit(&event_name_clone, &json!({
+                                            "type": "reasoning",
+                                            "content": reasoning,
+                                            "event_id": event_id_clone
+                                        }));
+                                    }
+                                }
+                                
+                                // 检查 finish_reason
+                                if let Some(finish_reason) = &choice.finish_reason {
+                                    eprintln!("[AI Stream] 在 buffer 中发现 finish_reason: {}", finish_reason);
+                                    if finish_reason == "tool_calls" && !current_tool_calls.is_empty() {
+                                        let tool_calls: Vec<serde_json::Value> = current_tool_calls
+                                            .values()
+                                            .map(|tc| {
+                                                json!({
+                                                    "id": tc.id.as_ref().unwrap_or(&"".to_string()),
+                                                    "type": tc.call_type.as_ref().unwrap_or(&"function".to_string()),
+                                                    "function": {
+                                                        "name": tc.function.as_ref()
+                                                            .and_then(|f| f.name.as_ref())
+                                                            .unwrap_or(&"".to_string()),
+                                                        "arguments": tc.function.as_ref()
+                                                            .and_then(|f| f.arguments.as_ref())
+                                                            .unwrap_or(&"".to_string()),
+                                                    }
+                                                })
+                                            })
+                                            .collect();
+                                        
+                                        let _ = app_clone.emit(&event_name_clone, &json!({
+                                            "type": "tool_calls",
+                                            "tool_calls": tool_calls,
+                                            "event_id": event_id_clone
+                                        }));
+                                        current_tool_calls.clear();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+        
+        // 如果还有未发送的工具调用，发送它们
+        if !current_tool_calls.is_empty() {
+            eprintln!("[AI Stream] 发送剩余的未完成工具调用，数量: {}", current_tool_calls.len());
+            let tool_calls: Vec<serde_json::Value> = current_tool_calls
+                .values()
+                .map(|tc| {
+                    json!({
+                        "id": tc.id.as_ref().unwrap_or(&"".to_string()),
+                        "type": tc.call_type.as_ref().unwrap_or(&"function".to_string()),
+                        "function": {
+                            "name": tc.function.as_ref()
+                                .and_then(|f| f.name.as_ref())
+                                .unwrap_or(&"".to_string()),
+                            "arguments": tc.function.as_ref()
+                                .and_then(|f| f.arguments.as_ref())
+                                .unwrap_or(&"".to_string()),
+                        }
+                    })
+                })
+                .collect();
+            
+            let _ = app_clone.emit(&event_name_clone, &json!({
+                "type": "tool_calls",
+                "tool_calls": tool_calls,
+                "event_id": event_id_clone
+            }));
+        }
+        
+        // 无论什么情况，流结束时都要发送 done 事件
+        eprintln!("[AI Stream] 发送完成事件（流结束），事件名称: {}", event_name_clone);
+        let emit_result = app_clone.emit(&event_name_clone, &json!({
+            "type": "done",
+            "event_id": event_id_clone
+        }));
+        if let Err(e) = emit_result {
+            eprintln!("[AI Stream] 发送完成事件失败: {}", e);
+        } else {
+            eprintln!("[AI Stream] 完成事件发送成功");
+        }
+        
         // 清理流式任务
         streams_clone.remove(&event_id_clone).await;
     });

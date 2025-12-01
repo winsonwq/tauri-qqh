@@ -134,7 +134,7 @@ ${toolsSection}
 {"shouldContinue": false, "reason": "已经收集到足够信息，可以直接回答"}
 </agent_meta>
 
-### 重要规则
+### 重要规则（严格执行，不然会导致严重后果）
 
 - **必须**先输出分析过程和回答内容，然后才输出 agent_meta 标签
 - **禁止**只输出 agent_meta 标签而不输出实际内容

@@ -35,17 +35,24 @@ const TaskInfo: React.FC<TaskInfoProps> = ({ props }) => {
   return (
     <div className="task-info-component bg-base-100 rounded-lg p-4 border border-base-300">
       <div className="space-y-3 text-sm">
-        {/* 任务状态 */}
-        {status && (
-          <div className="flex items-center gap-2">
-            <span className={`badge badge-sm ${
-              status === 'completed' ? 'badge-success' :
-              status === 'processing' ? 'badge-warning' :
-              status === 'failed' ? 'badge-error' :
-              'badge-neutral'
-            }`}>
-              {getStatusText(status)}
-            </span>
+        {/* 任务状态和时间 */}
+        {(status || completed_at) && (
+          <div className="flex items-center gap-2 flex-wrap">
+            {completed_at && (
+              <span className="text-xs text-base-content/60">
+                {formatDateTime(new Date(completed_at))}
+              </span>
+            )}
+            {status && (
+              <span className={`badge badge-sm ${
+                status === 'completed' ? 'badge-success' :
+                status === 'processing' ? 'badge-warning' :
+                status === 'failed' ? 'badge-error' :
+                'badge-neutral'
+              }`}>
+                {getStatusText(status)}
+              </span>
+            )}
           </div>
         )}
 
@@ -61,33 +68,10 @@ const TaskInfo: React.FC<TaskInfoProps> = ({ props }) => {
           </div>
         )}
 
-        {/* 更新时间 */}
-        {completed_at && (
-          <div className="text-xs text-base-content/60">
-            {formatDateTime(new Date(completed_at))}
-          </div>
-        )}
-
         {/* 错误信息 */}
         {error && (
           <div className="text-error break-all text-xs bg-error/10 p-2 rounded">
             {error}
-          </div>
-        )}
-
-        {/* 结果（文件路径） */}
-        {result && (
-          <div>
-            <div className="text-xs font-medium text-base-content/70 mb-1">结果文件路径：</div>
-            {typeof result === 'string' ? (
-              <pre className="text-xs text-base-content/90 whitespace-pre-wrap break-words bg-base-300 p-2 rounded">
-                {result}
-              </pre>
-            ) : (
-              <pre className="text-xs text-base-content/90 whitespace-pre-wrap break-words bg-base-300 p-2 rounded">
-                {JSON.stringify(result, null, 2)}
-              </pre>
-            )}
           </div>
         )}
 

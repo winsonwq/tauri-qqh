@@ -78,6 +78,9 @@ export const createMarkdownComponents = (
   em: ({ children }: { children?: React.ReactNode }) => (
     <em className="italic">{children}</em>
   ),
+  hr: () => (
+    <hr className="my-4 border-base-300" />
+  ),
   table: ({ children }: { children?: React.ReactNode }) => (
     <TableComponent>{children}</TableComponent>
   ),
