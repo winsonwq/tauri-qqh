@@ -64,6 +64,8 @@ pub struct TranscriptionResource {
     pub extracted_audio_path: Option<String>, // 提取的音频路径（仅视频资源有）
     #[serde(default)]
     pub latest_completed_task_id: Option<String>, // 最新一条转写成功的任务 ID
+    #[serde(default)]
+    pub cover_url: Option<String>, // 封面 URL（仅URL资源有）
     pub created_at: String,
     pub updated_at: String,
 }
@@ -640,6 +642,137 @@ fn detect_resource_type(file_path: &str) -> ResourceType {
     }
 }
 
+// 从 YouTube URL 提取视频 ID
+fn extract_youtube_video_id(url: &str) -> Option<String> {
+    // 匹配 youtube.com/watch?v=VIDEO_ID
+    if let Some(start) = url.find("youtube.com/watch?v=") {
+        let start_pos = start + "youtube.com/watch?v=".len();
+        let end_pos = url[start_pos..]
+            .find(|c: char| c == '&' || c == ' ' || c == '\n' || c == '\r')
+            .map(|i| start_pos + i)
+            .unwrap_or(url.len());
+        let video_id = &url[start_pos..end_pos];
+        if !video_id.is_empty() {
+            return Some(video_id.to_string());
+        }
+    }
+    
+    // 匹配 youtu.be/VIDEO_ID
+    if let Some(start) = url.find("youtu.be/") {
+        let start_pos = start + "youtu.be/".len();
+        let end_pos = url[start_pos..]
+            .find(|c: char| c == '?' || c == ' ' || c == '\n' || c == '\r')
+            .map(|i| start_pos + i)
+            .unwrap_or(url.len());
+        let video_id = &url[start_pos..end_pos];
+        if !video_id.is_empty() {
+            return Some(video_id.to_string());
+        }
+    }
+    
+    // 匹配嵌入格式
+    if let Some(start) = url.find("youtube.com/embed/") {
+        let start_pos = start + "youtube.com/embed/".len();
+        let end_pos = url[start_pos..]
+            .find(|c: char| c == '/' || c == '?' || c == '&' || c == ' ' || c == '\n' || c == '\r')
+            .map(|i| start_pos + i)
+            .unwrap_or(url.len());
+        let video_id = &url[start_pos..end_pos];
+        if !video_id.is_empty() {
+            return Some(video_id.to_string());
+        }
+    }
+    
+    None
+}
+
+// 获取 YouTube 视频封面 URL
+fn get_youtube_thumbnail_url(url: &str) -> Option<String> {
+    extract_youtube_video_id(url).map(|video_id| {
+        format!("https://img.youtube.com/vi/{}/hqdefault.jpg", video_id)
+    })
+}
+
+// 从 Bilibili URL 提取 BV 号或 AV 号
+fn extract_bilibili_video_id(url: &str) -> Option<(Option<String>, Option<String>)> {
+    let mut bvid: Option<String> = None;
+    let mut aid: Option<String> = None;
+    
+    // 匹配 BV 号
+    if let Some(start) = url.find("bilibili.com/video/BV") {
+        let start_pos = start + "bilibili.com/video/".len();
+        let end_pos = url[start_pos..]
+            .find(|c: char| c == '/' || c == '?' || c == '&' || c == ' ' || c == '\n' || c == '\r')
+            .map(|i| start_pos + i)
+            .unwrap_or(url.len());
+        let video_id = &url[start_pos..end_pos];
+        if video_id.starts_with("BV") && video_id.len() >= 12 {
+            bvid = Some(video_id.to_string());
+        }
+    }
+    
+    // 匹配 AV 号
+    if let Some(start) = url.find("bilibili.com/video/av") {
+        let start_pos = start + "bilibili.com/video/".len();
+        let end_pos = url[start_pos..]
+            .find(|c: char| c == '/' || c == '?' || c == '&' || c == ' ' || c == '\n' || c == '\r')
+            .map(|i| start_pos + i)
+            .unwrap_or(url.len());
+        let video_id = &url[start_pos..end_pos];
+        if video_id.starts_with("av") {
+            let av_str = video_id[2..].to_string();
+            if av_str.parse::<u64>().is_ok() {
+                aid = Some(av_str);
+            }
+        }
+    }
+    
+    if bvid.is_some() || aid.is_some() {
+        Some((bvid, aid))
+    } else {
+        None
+    }
+}
+
+// 获取 Bilibili 视频封面 URL（通过 API）
+async fn get_bilibili_thumbnail_url(url: &str) -> Option<String> {
+    let (bvid, aid) = extract_bilibili_video_id(url)?;
+    
+    // 优先使用 BV 号
+    let api_url = if let Some(bv) = bvid {
+        format!("https://api.bilibili.com/x/web-interface/view?bvid={}", bv)
+    } else if let Some(av) = aid {
+        format!("https://api.bilibili.com/x/web-interface/view?aid={}", av)
+    } else {
+        return None;
+    };
+    
+    // 调用 Bilibili API 获取封面
+    match reqwest::Client::new()
+        .get(&api_url)
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        .send()
+        .await
+    {
+        Ok(response) => {
+            if let Ok(json) = response.json::<serde_json::Value>().await {
+                if let Some(data) = json.get("data") {
+                    if let Some(pic) = data.get("pic") {
+                        if let Some(pic_str) = pic.as_str() {
+                            return Some(pic_str.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("获取 Bilibili 封面失败: {}", e);
+        }
+    }
+    
+    None
+}
+
 // 创建转写资源
 #[tauri::command]
 async fn create_transcription_resource(
@@ -662,6 +795,7 @@ async fn create_transcription_resource(
         platform: None,
         extracted_audio_path: None,
         latest_completed_task_id: None,
+        cover_url: None, // 文件资源没有封面
         created_at: now.clone(),
         updated_at: now,
     };
@@ -734,6 +868,22 @@ async fn create_transcription_resource_from_url(
         name
     };
     
+    // 获取封面 URL
+    let cover_url = match platform {
+        Some(Platform::Youtube) => {
+            // YouTube 封面可以通过简单拼接 URL 获取
+            get_youtube_thumbnail_url(&url)
+        }
+        Some(Platform::Bilibili) => {
+            // Bilibili 封面需要通过 API 获取，如果失败就留空
+            get_bilibili_thumbnail_url(&url).await
+        }
+        _ => {
+            // 其他平台暂不支持，留空
+            None
+        }
+    };
+    
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
     
@@ -746,6 +896,7 @@ async fn create_transcription_resource_from_url(
         platform,
         extracted_audio_path: None,
         latest_completed_task_id: None,
+        cover_url,
         created_at: now.clone(),
         updated_at: now,
     };

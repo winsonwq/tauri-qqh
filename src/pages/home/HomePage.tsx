@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { useAppDispatch } from '../../redux/hooks';
@@ -21,6 +21,68 @@ const HomePage = () => {
   const [urlInput, setUrlInput] = useState('');
   const [urlLoading, setUrlLoading] = useState(false);
   const message = useMessage();
+  
+  // 瀑布流布局相关 - 响应式，至少3列
+  const masonryRef = useRef<HTMLDivElement>(null);
+  const [columnCount, setColumnCount] = useState(3);
+  const [columns, setColumns] = useState<TranscriptionResource[][]>([]);
+  
+  // 计算列数（至少3列）
+  const calculateColumnCount = () => {
+    if (!masonryRef.current) return 3;
+    const width = masonryRef.current.offsetWidth;
+    // 根据宽度计算列数，但至少3列
+    // 假设每列最小宽度约为 280px（包括 gap）
+    const minColumnWidth = 280;
+    const gap = 16; // gap-4 = 1rem = 16px
+    // 计算能容纳多少列：总宽度 = 列数 * 列宽 + (列数 - 1) * gap
+    // 即：width >= cols * minColumnWidth + (cols - 1) * gap
+    // 解得：cols <= (width + gap) / (minColumnWidth + gap)
+    const calculatedCols = Math.floor((width + gap) / (minColumnWidth + gap));
+    // 至少3列，但不超过计算出的列数
+    return Math.max(3, Math.min(calculatedCols, 6)); // 最多6列，避免过多
+  };
+  
+  // 将资源分配到各列（瀑布流算法）
+  const distributeToColumns = (items: TranscriptionResource[], cols: number) => {
+    const result: TranscriptionResource[][] = Array.from({ length: cols }, () => []);
+    items.forEach((item) => {
+      // 找到最短的列
+      const shortestColumnIndex = result.reduce((minIndex, col, index) => {
+        return col.length < result[minIndex].length ? index : minIndex;
+      }, 0);
+      result[shortestColumnIndex].push(item);
+    });
+    return result;
+  };
+  
+  // 更新列数和分配
+  useEffect(() => {
+    const updateLayout = () => {
+      if (!masonryRef.current) return;
+      const cols = calculateColumnCount();
+      setColumnCount(cols);
+      setColumns(distributeToColumns(resources, cols));
+    };
+    
+    updateLayout();
+    
+    const handleResize = () => {
+      updateLayout();
+    };
+    
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [resources]);
+  
+  // 当资源或列数变化时，重新分配
+  useLayoutEffect(() => {
+    if (resources.length > 0 && columnCount > 0) {
+      setColumns(distributeToColumns(resources, columnCount));
+    } else {
+      setColumns([]);
+    }
+  }, [resources, columnCount]);
 
   // 加载转写资源列表
   const loadResources = async () => {
@@ -275,14 +337,18 @@ const HomePage = () => {
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {resources.map((resource) => (
-            <ResourceCard
-              key={resource.id}
-              resource={resource}
-              onClick={handleResourceClick}
-              onDelete={setResourceToDelete}
-            />
+        <div ref={masonryRef} className="flex gap-4 overflow-hidden pb-4">
+          {Array.from({ length: columnCount }, (_, colIndex) => (
+            <div key={colIndex} className="flex-1 flex flex-col gap-4 min-w-0">
+              {columns[colIndex]?.map((resource) => (
+                <ResourceCard
+                  key={resource.id}
+                  resource={resource}
+                  onClick={handleResourceClick}
+                  onDelete={setResourceToDelete}
+                />
+              ))}
+            </div>
           ))}
         </div>
       )}

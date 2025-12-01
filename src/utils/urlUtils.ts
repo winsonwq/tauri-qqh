@@ -232,4 +232,56 @@ export function convertToEmbedUrl(url: string, startTime?: number, autoplay: boo
   return null;
 }
 
+/**
+ * 从 YouTube URL 提取视频 ID
+ * @param url YouTube URL
+ * @returns 视频 ID，如果无法提取则返回 null
+ */
+export function extractYouTubeVideoId(url: string): string | null {
+  // 匹配 youtube.com/watch?v=VIDEO_ID
+  let match = url.match(/(?:youtube\.com\/watch\?v=)([^&\s]+)/);
+  if (match && match[1]) {
+    return match[1];
+  }
+  
+  // 匹配 youtu.be/VIDEO_ID
+  match = url.match(/(?:youtu\.be\/)([^?\s]+)/);
+  if (match && match[1]) {
+    return match[1];
+  }
+  
+  // 匹配嵌入格式
+  match = url.match(/youtube\.com\/embed\/([^/?&]+)/);
+  if (match && match[1]) {
+    return match[1];
+  }
+  
+  return null;
+}
+
+/**
+ * 获取 YouTube 视频封面 URL
+ * @param url YouTube URL 或视频 ID
+ * @param quality 缩略图质量，默认为 'hqdefault'
+ * @returns 封面 URL，如果无法提取视频 ID 则返回 null
+ */
+export function getYouTubeThumbnailUrl(
+  url: string, 
+  quality: 'default' | 'mqdefault' | 'hqdefault' | 'sddefault' | 'maxresdefault' = 'hqdefault'
+): string | null {
+  // 如果已经是视频 ID（11 个字符），直接使用
+  let videoId: string | null = null;
+  if (url.length === 11 && /^[a-zA-Z0-9_-]{11}$/.test(url)) {
+    videoId = url;
+  } else {
+    videoId = extractYouTubeVideoId(url);
+  }
+  
+  if (videoId) {
+    return `https://img.youtube.com/vi/${videoId}/${quality}.jpg`;
+  }
+  
+  return null;
+}
+
 

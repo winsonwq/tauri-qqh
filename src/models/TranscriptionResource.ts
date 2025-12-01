@@ -27,6 +27,7 @@ export interface TranscriptionResource {
   platform?: Platform; // 平台类型（仅URL资源有）：youtube、bilibili、other
   extracted_audio_path?: string; // 提取的音频路径（仅视频资源有）
   latest_completed_task_id?: string; // 最新一条转写成功的任务 ID
+  cover_url?: string; // 封面 URL（仅URL资源有）
   created_at: string; // 创建时间
   updated_at: string; // 更新时间
 }
