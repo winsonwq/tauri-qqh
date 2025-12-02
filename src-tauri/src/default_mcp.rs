@@ -55,13 +55,17 @@ pub fn get_default_tools() -> Vec<MCPTool> {
         },
         MCPTool {
             name: "get_task_info".to_string(),
-            description: Some("获取转写任务（记录）信息，包括转写结果内容。如果任务已完成，会自动读取并返回转写结果文件的内容（transcription_content字段）。如果不提供 task_id，将使用当前上下文中的任务ID。注意：要获取转写结果内容，必须调用此工具，仅调用 get_resource_info 无法获取转写结果".to_string()),
+            description: Some("获取转写任务（记录）信息，包括转写结果内容。如果任务已完成，默认返回压缩后的转写内容摘要（transcription_content字段），这样可以大幅减少 token 消耗。只有在需要完整原文、精确时间戳或详细分析时，才设置 use_full_content: true。如果不提供 task_id，将使用当前上下文中的任务ID。注意：要获取转写结果内容，必须调用此工具，仅调用 get_resource_info 无法获取转写结果".to_string()),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "task_id": {
                         "type": "string",
                         "description": "任务ID（可选，如果不提供则使用当前上下文）。如果任务要求获取转写结果，应该使用资源的 latest_completed_task_id 或当前上下文的 task_id"
+                    },
+                    "use_full_content": {
+                        "type": "boolean",
+                        "description": "是否使用完整原文（默认 false）。如果为 false，返回压缩后的摘要（推荐，可大幅减少 token 消耗）。只有在需要完整原文、精确时间戳或详细分析时才设置为 true"
                     }
                 },
                 "required": []
@@ -456,27 +460,39 @@ async fn handle_get_task_info(
     .await
     .map_err(|e| format!("数据库操作失败: {}", e))??;
     
-    // 获取转写内容（如果任务已完成且有结果文件）
+    // 解析参数：是否需要完整内容
+    let use_full_content = arguments
+        .get("use_full_content")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false); // 默认使用压缩版本
+    
+    // 获取转写内容（如果任务已完成）
     let transcription_content: Option<String> = if task.status == "completed" {
-        if let Some(ref result_path) = task.result {
-            let result_path_clone = result_path.clone();
-            match tokio::task::spawn_blocking(move || -> Result<Option<String>, String> {
-                let result_file = std::path::PathBuf::from(&result_path_clone);
-                if result_file.exists() {
-                    let content = std::fs::read_to_string(&result_file)
-                        .map_err(|e| format!("无法读取结果文件: {}", e))?;
-                    Ok(Some(content))
-                } else {
-                    Ok(None)
+        if use_full_content {
+            // 需要完整内容，从文件读取
+            if let Some(ref result_path) = task.result {
+                let result_path_clone = result_path.clone();
+                match tokio::task::spawn_blocking(move || -> Result<Option<String>, String> {
+                    let result_file = std::path::PathBuf::from(&result_path_clone);
+                    if result_file.exists() {
+                        let content = std::fs::read_to_string(&result_file)
+                            .map_err(|e| format!("无法读取结果文件: {}", e))?;
+                        Ok(Some(content))
+                    } else {
+                        Ok(None)
+                    }
+                })
+                .await {
+                    Ok(Ok(content)) => content,
+                    Ok(Err(_)) => None,
+                    Err(_) => None,
                 }
-            })
-            .await {
-                Ok(Ok(content)) => content,
-                Ok(Err(_)) => None, // 如果读取失败，不返回错误，只是不包含内容
-                Err(_) => None, // 如果任务执行失败，不包含内容
+            } else {
+                None
             }
         } else {
-            None
+            // 默认使用压缩版本
+            task.compressed_content.clone()
         }
     } else {
         None

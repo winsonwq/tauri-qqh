@@ -57,6 +57,81 @@ export class ReActWorkflowEngine {
   }
 
   /**
+   * 压缩大消息（用于 Thought 和 Observation 阶段）
+   */
+  private compressLargeMessages(
+    messages: AIMessage[],
+    maxContentLength: number = 5000,
+  ): AIMessage[] {
+    return messages.map((msg) => {
+      // 只压缩 tool 类型的消息
+      if (msg.role === 'tool' && msg.content && msg.content.length > maxContentLength) {
+        try {
+          const content = JSON.parse(msg.content)
+          // 如果包含 transcription_content，进行压缩
+          if (content?.props?.transcription_content) {
+            const transcriptionContent = content.props.transcription_content
+            if (
+              typeof transcriptionContent === 'string' &&
+              transcriptionContent.length > maxContentLength
+            ) {
+              // 提取文本摘要
+              try {
+                const jsonData = JSON.parse(transcriptionContent)
+                if (jsonData.transcription && Array.isArray(jsonData.transcription)) {
+                  const texts = jsonData.transcription
+                    .map((seg: any) => seg.text)
+                    .filter(Boolean)
+                    .join(' ')
+
+                  const summary =
+                    texts.length > maxContentLength
+                      ? texts.substring(0, maxContentLength) +
+                        `...\n\n（内容已压缩，原始内容共 ${transcriptionContent.length} 字符）`
+                      : texts
+
+                  return {
+                    ...msg,
+                    content: JSON.stringify({
+                      ...content,
+                      props: {
+                        ...content.props,
+                        transcription_content: summary,
+                        transcription_content_compressed: true,
+                      },
+                    }),
+                  }
+                }
+              } catch {
+                // JSON 解析失败，直接截断
+              }
+
+              // 如果无法解析，直接截断
+              const truncated = transcriptionContent.substring(0, maxContentLength)
+              return {
+                ...msg,
+                content: JSON.stringify({
+                  ...content,
+                  props: {
+                    ...content.props,
+                    transcription_content:
+                      truncated +
+                      `...\n\n（内容已压缩，原始内容共 ${transcriptionContent.length} 字符）`,
+                    transcription_content_compressed: true,
+                  },
+                }),
+              }
+            }
+          }
+        } catch {
+          // 解析失败，不压缩
+        }
+      }
+      return msg
+    })
+  }
+
+  /**
    * 执行 AI 调用
    */
   private async executeAICall(
@@ -68,6 +143,7 @@ export class ReActWorkflowEngine {
     eventId: string,
     assistantMessageId: string,
     updateMessages: (updater: (prev: AIMessage[]) => AIMessage[]) => void,
+    shouldCompress: boolean = false, // 是否压缩大消息
   ): Promise<AICallResult> {
     return new Promise(async (resolve, reject) => {
       let finalContent = ''
@@ -160,9 +236,14 @@ export class ReActWorkflowEngine {
           ? (toolProviderWithFullList.getFullToolList?.() || [])
           : []
 
+        // 如果需要压缩，压缩大消息
+        const messagesToSend = shouldCompress
+          ? this.compressLargeMessages(messages, 5000)
+          : messages
+
         await this.backend.chatCompletion({
           configId,
-          messages,
+          messages: messagesToSend,
           tools: tools.length > 0 ? tools : undefined,
           systemMessage,
           eventId,
@@ -231,6 +312,7 @@ export class ReActWorkflowEngine {
     this.currentStreamEventId = eventId
 
     // 思考阶段不传工具，让 AI 只做分析决策
+    // Thought 阶段压缩大消息以减少 token 消耗
     const result = await this.executeAICall(
       configId,
       chatId,
@@ -240,6 +322,7 @@ export class ReActWorkflowEngine {
       eventId,
       assistantMessageId,
       updateMessages,
+      true, // 压缩大消息
     )
 
     const meta = parseAgentMeta(result.content)
@@ -337,6 +420,7 @@ export class ReActWorkflowEngine {
     this.currentStreamEventId = eventId
 
     // 总是传入工具列表，让 AI 自己判断是否需要调用工具
+    // Action 阶段保留完整消息（不压缩）
     const result = await this.executeAICall(
       configId,
       chatId,
@@ -346,6 +430,7 @@ export class ReActWorkflowEngine {
       eventId,
       assistantMessageId,
       updateMessages,
+      false, // Action 阶段不压缩，保留完整信息
     )
 
     console.log(
@@ -375,6 +460,7 @@ export class ReActWorkflowEngine {
     const assistantMessageId = `observation-${Date.now()}`
     this.currentStreamEventId = eventId
 
+    // Observation 阶段压缩大消息以减少 token 消耗
     const result = await this.executeAICall(
       configId,
       chatId,
@@ -384,6 +470,7 @@ export class ReActWorkflowEngine {
       eventId,
       assistantMessageId,
       updateMessages,
+      true, // 压缩大消息
     )
 
     return result.content

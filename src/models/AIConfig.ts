@@ -6,5 +6,6 @@ export interface AIConfig {
   model: string
   created_at: string
   updated_at: string
+  is_compression_config?: boolean
 }
 

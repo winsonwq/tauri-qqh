@@ -67,10 +67,17 @@ pub fn init_database(db_path: &PathBuf) -> SqlResult<Connection> {
             error TEXT,
             log TEXT,
             params TEXT NOT NULL,
+            compressed_content TEXT,
             FOREIGN KEY (resource_id) REFERENCES transcription_resources(id)
         )",
         [],
     )?;
+    
+    // 迁移：如果 transcription_tasks 表存在但没有 compressed_content 字段，则添加
+    let _ = conn.execute(
+        "ALTER TABLE transcription_tasks ADD COLUMN compressed_content TEXT",
+        [],
+    );
     
     // 创建索引以提高查询性能
     conn.execute(
@@ -101,6 +108,12 @@ pub fn init_database(db_path: &PathBuf) -> SqlResult<Connection> {
         )",
         [],
     )?;
+    
+    // 添加 is_compression_config 字段（如果不存在）
+    conn.execute(
+        "ALTER TABLE ai_configs ADD COLUMN is_compression_config INTEGER DEFAULT 0",
+        [],
+    ).ok(); // 如果字段已存在，忽略错误
     
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_ai_configs_created_at ON ai_configs(created_at)",
@@ -699,8 +712,8 @@ pub fn create_task(conn: &Connection, task: &TranscriptionTask) -> SqlResult<()>
     
     conn.execute(
         "INSERT INTO transcription_tasks
-         (id, resource_id, status, created_at, completed_at, result, error, log, params)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+         (id, resource_id, status, created_at, completed_at, result, error, log, params, compressed_content)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             task.id,
             task.resource_id,
@@ -711,6 +724,7 @@ pub fn create_task(conn: &Connection, task: &TranscriptionTask) -> SqlResult<()>
             task.error,
             task.log,
             params_json,
+            task.compressed_content,
         ],
     )?;
     Ok(())
@@ -718,7 +732,7 @@ pub fn create_task(conn: &Connection, task: &TranscriptionTask) -> SqlResult<()>
 
 pub fn get_task(conn: &Connection, task_id: &str) -> SqlResult<Option<TranscriptionTask>> {
     let mut stmt = conn.prepare(
-        "SELECT id, resource_id, status, created_at, completed_at, result, error, log, params
+        "SELECT id, resource_id, status, created_at, completed_at, result, error, log, params, compressed_content
          FROM transcription_tasks WHERE id = ?1"
     )?;
     
@@ -736,6 +750,7 @@ pub fn get_task(conn: &Connection, task_id: &str) -> SqlResult<Option<Transcript
             result: row.get(5)?,
             error: row.get(6)?,
             log: row.get(7)?,
+            compressed_content: row.get(9)?,
             params,
         })
     })?;
@@ -748,7 +763,7 @@ pub fn get_task(conn: &Connection, task_id: &str) -> SqlResult<Option<Transcript
 
 pub fn get_tasks_by_resource(conn: &Connection, resource_id: &str) -> SqlResult<Vec<TranscriptionTask>> {
     let mut stmt = conn.prepare(
-        "SELECT id, resource_id, status, created_at, completed_at, result, error, log, params
+        "SELECT id, resource_id, status, created_at, completed_at, result, error, log, params, compressed_content
          FROM transcription_tasks
          WHERE resource_id = ?1
          ORDER BY created_at DESC"
@@ -768,6 +783,7 @@ pub fn get_tasks_by_resource(conn: &Connection, resource_id: &str) -> SqlResult<
             result: row.get(5)?,
             error: row.get(6)?,
             log: row.get(7)?,
+            compressed_content: row.get(9)?,
             params,
         })
     })?;
@@ -781,7 +797,7 @@ pub fn get_tasks_by_resource(conn: &Connection, resource_id: &str) -> SqlResult<
 
 pub fn get_all_tasks(conn: &Connection) -> SqlResult<Vec<TranscriptionTask>> {
     let mut stmt = conn.prepare(
-        "SELECT id, resource_id, status, created_at, completed_at, result, error, log, params
+        "SELECT id, resource_id, status, created_at, completed_at, result, error, log, params, compressed_content
          FROM transcription_tasks
          ORDER BY created_at DESC"
     )?;
@@ -800,6 +816,7 @@ pub fn get_all_tasks(conn: &Connection) -> SqlResult<Vec<TranscriptionTask>> {
             result: row.get(5)?,
             error: row.get(6)?,
             log: row.get(7)?,
+            compressed_content: row.get(9)?,
             params,
         })
     })?;
@@ -818,7 +835,7 @@ pub fn update_task(conn: &Connection, task: &TranscriptionTask) -> SqlResult<()>
     conn.execute(
         "UPDATE transcription_tasks
          SET resource_id = ?2, status = ?3, created_at = ?4, completed_at = ?5,
-             result = ?6, error = ?7, log = ?8, params = ?9
+             result = ?6, error = ?7, log = ?8, params = ?9, compressed_content = ?10
          WHERE id = ?1",
         params![
             task.id,
@@ -830,6 +847,7 @@ pub fn update_task(conn: &Connection, task: &TranscriptionTask) -> SqlResult<()>
             task.error,
             task.log,
             params_json,
+            task.compressed_content,
         ],
     )?;
     Ok(())
@@ -859,9 +877,10 @@ pub fn delete_tasks_by_resource(conn: &Connection, resource_id: &str) -> SqlResu
 
 // AI 配置 CRUD 操作
 pub fn create_ai_config(conn: &Connection, config: &AIConfig) -> SqlResult<()> {
+    let is_compression = if config.is_compression_config.unwrap_or(false) { 1 } else { 0 };
     conn.execute(
-        "INSERT INTO ai_configs (id, name, base_url, api_key, model, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO ai_configs (id, name, base_url, api_key, model, created_at, updated_at, is_compression_config)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             config.id,
             config.name,
@@ -870,6 +889,7 @@ pub fn create_ai_config(conn: &Connection, config: &AIConfig) -> SqlResult<()> {
             config.model,
             config.created_at,
             config.updated_at,
+            is_compression,
         ],
     )?;
     Ok(())
@@ -877,11 +897,12 @@ pub fn create_ai_config(conn: &Connection, config: &AIConfig) -> SqlResult<()> {
 
 pub fn get_ai_config(conn: &Connection, config_id: &str) -> SqlResult<Option<AIConfig>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, base_url, api_key, model, created_at, updated_at
+        "SELECT id, name, base_url, api_key, model, created_at, updated_at, is_compression_config
          FROM ai_configs WHERE id = ?1"
     )?;
     
     let config_iter = stmt.query_map(params![config_id], |row| {
+        let is_compression: Option<i32> = row.get(7)?;
         Ok(AIConfig {
             id: row.get(0)?,
             name: row.get(1)?,
@@ -890,6 +911,7 @@ pub fn get_ai_config(conn: &Connection, config_id: &str) -> SqlResult<Option<AIC
             model: row.get(4)?,
             created_at: row.get(5)?,
             updated_at: row.get(6)?,
+            is_compression_config: is_compression.map(|v| v != 0),
         })
     })?;
     
@@ -901,12 +923,13 @@ pub fn get_ai_config(conn: &Connection, config_id: &str) -> SqlResult<Option<AIC
 
 pub fn get_all_ai_configs(conn: &Connection) -> SqlResult<Vec<AIConfig>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, base_url, api_key, model, created_at, updated_at
+        "SELECT id, name, base_url, api_key, model, created_at, updated_at, is_compression_config
          FROM ai_configs
          ORDER BY created_at DESC"
     )?;
     
     let config_iter = stmt.query_map([], |row| {
+        let is_compression: Option<i32> = row.get(7)?;
         Ok(AIConfig {
             id: row.get(0)?,
             name: row.get(1)?,
@@ -915,6 +938,7 @@ pub fn get_all_ai_configs(conn: &Connection) -> SqlResult<Vec<AIConfig>> {
             model: row.get(4)?,
             created_at: row.get(5)?,
             updated_at: row.get(6)?,
+            is_compression_config: is_compression.map(|v| v != 0),
         })
     })?;
     
@@ -926,9 +950,10 @@ pub fn get_all_ai_configs(conn: &Connection) -> SqlResult<Vec<AIConfig>> {
 }
 
 pub fn update_ai_config(conn: &Connection, config: &AIConfig) -> SqlResult<()> {
+    let is_compression = if config.is_compression_config.unwrap_or(false) { 1 } else { 0 };
     conn.execute(
         "UPDATE ai_configs
-         SET name = ?2, base_url = ?3, api_key = ?4, model = ?5, updated_at = ?6
+         SET name = ?2, base_url = ?3, api_key = ?4, model = ?5, updated_at = ?6, is_compression_config = ?7
          WHERE id = ?1",
         params![
             config.id,
@@ -937,8 +962,53 @@ pub fn update_ai_config(conn: &Connection, config: &AIConfig) -> SqlResult<()> {
             config.api_key,
             config.model,
             config.updated_at,
+            is_compression,
         ],
     )?;
+    Ok(())
+}
+
+// 获取用于压缩的 AI 配置
+pub fn get_compression_config(conn: &Connection) -> SqlResult<Option<AIConfig>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, base_url, api_key, model, created_at, updated_at, is_compression_config
+         FROM ai_configs WHERE is_compression_config = 1 LIMIT 1"
+    )?;
+    
+    let config_iter = stmt.query_map([], |row| {
+        let is_compression: Option<i32> = row.get(7)?;
+        Ok(AIConfig {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            base_url: row.get(2)?,
+            api_key: row.get(3)?,
+            model: row.get(4)?,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
+            is_compression_config: is_compression.map(|v| v != 0),
+        })
+    })?;
+    
+    for config in config_iter {
+        return Ok(Some(config?));
+    }
+    Ok(None)
+}
+
+// 设置压缩配置（确保只有一个配置被标记为压缩配置）
+pub fn set_compression_config(conn: &Connection, config_id: &str) -> SqlResult<()> {
+    // 先清除所有配置的压缩标记
+    conn.execute(
+        "UPDATE ai_configs SET is_compression_config = 0",
+        [],
+    )?;
+    
+    // 设置指定配置为压缩配置
+    conn.execute(
+        "UPDATE ai_configs SET is_compression_config = 1 WHERE id = ?1",
+        params![config_id],
+    )?;
+    
     Ok(())
 }
 

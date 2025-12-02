@@ -32,6 +32,7 @@ type UseTranscriptionTasksManagerResult = {
   loadResourceAndTasks: () => Promise<void>;
   loadTasks: (autoSwitchToRunning?: boolean) => Promise<void>;
   resetTasks: () => void;
+  updateTask: (taskId: string, updatedTask: TranscriptionTask) => void;
 };
 
 const useTranscriptionTasksManager = ({
@@ -181,13 +182,13 @@ const useTranscriptionTasksManager = ({
             }
           }
         } else {
-          // 如果不自动切换，但当前选中的任务已经完成或失败，则清除选中状态
+          // 如果不自动切换，保留当前选中的任务（如果它仍然存在）
           const currentSelectedTask = sortedTasks.find(t => t.id === selectedTaskIdRef.current);
-          if (currentSelectedTask && 
-             (currentSelectedTask.status === TranscriptionTaskStatus.COMPLETED || 
-              currentSelectedTask.status === TranscriptionTaskStatus.FAILED)) {
+          if (!currentSelectedTask && selectedTaskIdRef.current) {
+            // 如果当前选中的任务不存在了，才清除选中状态
             setSelectedTaskId(null);
           }
+          // 如果任务仍然存在，保持选中状态不变
         }
       } catch (err) {
         console.error('加载任务失败:', err);
@@ -206,6 +207,20 @@ const useTranscriptionTasksManager = ({
     setSelectedTaskId(null);
   }, []);
 
+  // 更新单个任务（用于压缩后更新 compressed_content）
+  const updateTask = useCallback((taskId: string, updatedTask: TranscriptionTask) => {
+    setTasks((prevTasks) => {
+      const taskIndex = prevTasks.findIndex((t) => t.id === taskId);
+      if (taskIndex === -1) {
+        return prevTasks; // 任务不存在，不更新
+      }
+      // 创建新数组，只更新对应的任务
+      const newTasks = [...prevTasks];
+      newTasks[taskIndex] = updatedTask;
+      return newTasks;
+    });
+  }, []);
+
   return {
     tasks,
     selectedTaskId,
@@ -213,6 +228,7 @@ const useTranscriptionTasksManager = ({
     loadResourceAndTasks,
     loadTasks,
     resetTasks,
+    updateTask,
   };
 };
 

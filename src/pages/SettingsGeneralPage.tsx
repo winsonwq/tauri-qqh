@@ -8,6 +8,7 @@ import { useMessage } from '../components/Toast'
 import { useAppDispatch, useAppSelector } from '../redux/hooks'
 import { refreshMCPConfigs } from '../redux/slices/mcpSlice'
 import { refreshAIConfigs } from '../redux/slices/aiConfigSlice'
+import Select from '../components/Select'
 
 const SettingsGeneralPage = () => {
   const [models, setModels] = useState<ModelInfo[]>([])
@@ -128,17 +129,59 @@ const AIConfigBlock = () => {
   const [showAddModal, setShowAddModal] = useState(false)
   const [editingConfig, setEditingConfig] = useState<AIConfig | null>(null)
   const [deletingConfig, setDeletingConfig] = useState<AIConfig | null>(null)
+  const [compressionConfigId, setCompressionConfigId] = useState<string>('')
+  const [loadingCompressionConfig, setLoadingCompressionConfig] = useState(false)
+
+  // 加载压缩配置
+  const loadCompressionConfig = async () => {
+    try {
+      const compressionConfig = await invoke<AIConfig | null>('get_compression_config')
+      if (compressionConfig) {
+        setCompressionConfigId(compressionConfig.id)
+      } else {
+        setCompressionConfigId('')
+      }
+    } catch (err) {
+      console.error('加载压缩配置失败:', err)
+      setCompressionConfigId('')
+    }
+  }
+
+  // 切换压缩配置
+  const handleCompressionConfigChange = async (configId: string) => {
+    if (configId === compressionConfigId) return
+    
+    setLoadingCompressionConfig(true)
+    try {
+      await invoke('set_compression_config', { configId })
+      setCompressionConfigId(configId)
+      message.success('压缩模型设置成功')
+    } catch (err) {
+      console.error('设置压缩模型失败:', err)
+      message.error(err instanceof Error ? err.message : '设置压缩模型失败')
+    } finally {
+      setLoadingCompressionConfig(false)
+    }
+  }
 
   // 刷新配置
   const handleRefresh = async () => {
     try {
       await dispatch(refreshAIConfigs()).unwrap()
+      await loadCompressionConfig()
       message.success('刷新成功')
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : '刷新失败'
       message.error(errorMsg)
     }
   }
+
+  // 初始化时加载压缩配置
+  useEffect(() => {
+    if (configs.length > 0) {
+      loadCompressionConfig()
+    }
+  }, [configs.length])
 
   // 删除配置
   const handleDelete = async (config: AIConfig) => {
@@ -149,11 +192,16 @@ const AIConfigBlock = () => {
   const handleConfirmDelete = async () => {
     if (!deletingConfig) return
     try {
+      const wasCompressionConfig = deletingConfig.id === compressionConfigId
       await invoke('delete_ai_config', { id: deletingConfig.id })
       message.success('删除成功')
       setDeletingConfig(null)
       // 刷新 Redux store
       await dispatch(refreshAIConfigs()).unwrap()
+      // 如果删除的是压缩配置，清除压缩配置选择
+      if (wasCompressionConfig) {
+        setCompressionConfigId('')
+      }
     } catch (err) {
       console.error('删除 AI 配置失败:', err)
       message.error('删除失败')
@@ -163,6 +211,7 @@ const AIConfigBlock = () => {
   return (
       <div className="card card-border bg-base-100 shadow-sm">
       <div className="card-body">
+        {/* AI 配置列表部分 */}
         <div className="flex items-center justify-between mb-4">
           <h2 className="card-title">AI 配置</h2>
           <div className="flex items-center gap-2">
@@ -226,6 +275,36 @@ const AIConfigBlock = () => {
             </table>
           </div>
         )}
+
+        {/* 压缩模型选择部分 */}
+        <div className="mt-6 pt-6 border-t border-base-300">
+          <h3 className="text-md font-semibold mb-3">压缩模型选择</h3>
+          {configs.length === 0 ? (
+            <p className="text-sm text-base-content/50">暂无 AI 配置，请先添加配置</p>
+          ) : (
+            <div className="flex items-center gap-3">
+              <Select
+                value={compressionConfigId}
+                options={[
+                  { value: '', label: '未选择', disabled: false },
+                  ...configs.map((config) => ({
+                    value: config.id,
+                    label: `${config.name} (${config.model})`,
+                  })),
+                ]}
+                onChange={handleCompressionConfigChange}
+                disabled={loadingCompressionConfig || loading}
+                placeholder="请选择压缩模型"
+                size="sm"
+                className="flex-1 max-w-md"
+                aria-label="选择压缩模型"
+              />
+              {loadingCompressionConfig && (
+                <span className="loading loading-spinner loading-sm"></span>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* 添加配置弹窗 */}
@@ -251,6 +330,7 @@ const AIConfigBlock = () => {
             setEditingConfig(null)
             // 刷新 Redux store
             await dispatch(refreshAIConfigs()).unwrap()
+            await loadCompressionConfig()
           }}
         />
       )}

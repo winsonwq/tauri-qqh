@@ -92,6 +92,7 @@ pub struct TranscriptionTask {
     pub error: Option<String>,
     pub log: Option<String>, // 运行日志（stdout + stderr）
     pub params: TranscriptionParams,
+    pub compressed_content: Option<String>, // 压缩后的转写内容
 }
 
 // 转写参数
@@ -124,6 +125,7 @@ pub struct AIConfig {
     pub model: String,
     pub created_at: String,
     pub updated_at: String,
+    pub is_compression_config: Option<bool>,
 }
 
 // Chat 模型
@@ -936,6 +938,7 @@ async fn create_transcription_task(
         error: None,
         log: None,
         params,
+        compressed_content: None,
     };
     
     // 保存到数据库
@@ -1095,6 +1098,20 @@ async fn execute_transcription_task(
                         })
                         .await
                         .map_err(|e| format!("数据库操作失败: {}", e))??;
+                        
+                        // 字幕下载完成后，自动压缩转写内容
+                        let output_file_clone = output_file.clone();
+                        let task_id_clone = task_id.clone();
+                        let db_path_clone = db_path.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = compress_transcription_after_completion(
+                                output_file_clone,
+                                task_id_clone,
+                                db_path_clone,
+                            ).await {
+                                eprintln!("压缩转写内容失败: {}", e);
+                            }
+                        });
                         
                         return Ok("从URL成功获取字幕并转换为转写结果".to_string());
                     }
@@ -1441,8 +1458,326 @@ async fn execute_transcription_task(
     .await
     .map_err(|e| format!("数据库操作失败: {}", e))??;
     
+    // 转写完成后，自动压缩转写内容
+    let output_file_clone = output_file.clone();
+    let task_id_clone = task_id.clone();
+    let db_path_clone = db_path.clone();
+    tokio::spawn(async move {
+        if let Err(e) = compress_transcription_after_completion(
+            output_file_clone,
+            task_id_clone,
+            db_path_clone,
+        ).await {
+            eprintln!("压缩转写内容失败: {}", e);
+        }
+    });
+    
     Ok(output_file.to_string_lossy().to_string())
 }
+
+// 手动触发压缩转写内容（Tauri 命令）
+#[tauri::command]
+async fn compress_transcription_content_manual(
+    task_id: String,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let db_path = db::get_db_path(&app_data_dir);
+    
+    // 获取任务信息和结果文件
+    let result_file = tokio::task::spawn_blocking({
+        let db_path = db_path.clone();
+        let task_id = task_id.clone();
+        move || -> Result<PathBuf, String> {
+            let conn = db::init_database(&db_path)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            
+            let task = db::get_task(&conn, &task_id)
+                .map_err(|e| format!("无法获取任务: {}", e))?
+                .ok_or_else(|| "任务不存在".to_string())?;
+            
+            // 检查任务是否已完成
+            if task.status != "completed" {
+                return Err("任务尚未完成，无法压缩".to_string());
+            }
+            
+            // 检查是否有结果文件
+            let result_file = task.result.as_ref()
+                .map(|r| PathBuf::from(r))
+                .filter(|p| p.exists())
+                .ok_or_else(|| "转写结果文件不存在".to_string())?;
+            
+            Ok(result_file)
+        }
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
+    
+    // 调用压缩函数并等待完成
+    compress_transcription_after_completion(
+        result_file,
+        task_id,
+        db_path,
+    ).await?;
+    
+    Ok("压缩完成".to_string())
+}
+
+// 压缩转写内容（在转写完成后自动调用）
+async fn compress_transcription_after_completion(
+    result_file: PathBuf,
+    task_id: String,
+    db_path: PathBuf,
+) -> Result<(), String> {
+    // 读取转写结果文件
+    let content = tokio::fs::read_to_string(&result_file)
+        .await
+        .map_err(|e| format!("无法读取转写结果文件: {}", e))?;
+    
+    // 解析 JSON
+    let json_value: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("无法解析转写结果 JSON: {}", e))?;
+    
+    let segments = json_value
+        .get("transcription")
+        .and_then(|t| t.as_array())
+        .ok_or_else(|| "无法找到 transcription 数组".to_string())?;
+    
+    if segments.is_empty() {
+        return Ok(()); // 空内容，不需要压缩
+    }
+    
+    // 计算总时长
+    let first_seg = &segments[0];
+    let last_seg = &segments[segments.len() - 1];
+    let start_time = first_seg
+        .get("offsets")
+        .and_then(|o| o.get("from"))
+        .and_then(|t| t.as_f64())
+        .unwrap_or(0.0);
+    let end_time = last_seg
+        .get("offsets")
+        .and_then(|o| o.get("to"))
+        .and_then(|t| t.as_f64())
+        .unwrap_or(0.0);
+    let duration = end_time - start_time;
+    
+    // 提取所有文本和时间戳，构建输入
+    let mut input_segments = Vec::new();
+    for seg in segments {
+        let time_from = seg
+            .get("timestamps")
+            .and_then(|t| t.get("from"))
+            .and_then(|t| t.as_str())
+            .unwrap_or("");
+        let text = seg
+            .get("text")
+            .and_then(|t| t.as_str())
+            .unwrap_or("");
+        if !text.is_empty() {
+            input_segments.push(format!("[{}] {}", time_from, text));
+        }
+    }
+    
+    let full_text = input_segments.join("\n");
+    
+    // 如果内容不太长，直接存储原始文本（不需要压缩）
+    if full_text.len() < 5000 {
+        let compressed = format!(
+            "转写内容（总时长: {:.1} 秒，共 {} 个片段）：\n\n{}",
+            duration,
+            segments.len(),
+            full_text
+        );
+        
+        // 打印压缩结果到控制台
+        eprintln!("========== 压缩结果（短内容，未压缩）==========");
+        eprintln!("任务ID: {}", task_id);
+        eprintln!("原始片段数: {}", segments.len());
+        eprintln!("原始时长: {:.1} 秒", duration);
+        eprintln!("内容长度: {} 字符（小于5000，未压缩）", full_text.len());
+        eprintln!("==============================");
+        
+        // 更新数据库
+        tokio::task::spawn_blocking({
+            let db_path = db_path.clone();
+            let task_id = task_id.clone();
+            let compressed = compressed.clone();
+            move || {
+                let conn = db::init_database(&db_path)
+                    .map_err(|e| format!("无法初始化数据库: {}", e))?;
+                
+                let mut task = db::get_task(&conn, &task_id)
+                    .map_err(|e| format!("无法获取任务: {}", e))?
+                    .ok_or_else(|| "任务不存在".to_string())?;
+                
+                task.compressed_content = Some(compressed);
+                db::update_task(&conn, &task)
+                    .map_err(|e| format!("无法更新任务: {}", e))?;
+                
+                Ok::<(), String>(())
+            }
+        })
+        .await
+        .map_err(|e| format!("数据库操作失败: {}", e))??;
+        
+        return Ok(());
+    }
+    
+    // 获取压缩配置
+    let compression_config = tokio::task::spawn_blocking({
+        let db_path = db_path.clone();
+        move || -> Result<Option<AIConfig>, String> {
+            let conn = db::init_database(&db_path)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            db::get_compression_config(&conn)
+                .map_err(|e| format!("无法获取压缩配置: {}", e))
+        }
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
+    
+    let compression_config = compression_config.ok_or_else(|| {
+        "未设置压缩模型配置，请在设置中选择一个 AI 配置作为压缩模型".to_string()
+    })?;
+    
+    let compression_model = compression_config.model;
+    let base_url = compression_config.base_url;
+    let api_key = compression_config.api_key;
+    
+    // 构建压缩提示词
+    let system_message = ai::ChatMessage {
+        role: "system".to_string(),
+        content: Some(
+            "你是一个专业的视频转写内容压缩助手。你的任务是将长视频的转写内容压缩成简洁的摘要，同时保留关键信息。\n\n要求：\n1. 保留所有时间戳信息（格式：[HH:MM:SS]）\n2. 保留每个时间段的主要内容要点\n3. 对于相似或重复的内容，进行合并\n4. 保持时间顺序\n5. 压缩后的内容应该保留原始内容的 20-30% 左右\n6. 输出格式：每行一个时间段，格式为 [时间戳] 内容摘要\n7. 如果某个时间段内容不重要，可以省略，但重要内容必须保留".to_string(),
+        ),
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+        cache_control: None,
+    };
+    
+    // 如果内容太长，只取前一部分和后一部分
+    let input_text = if full_text.len() > 50000 {
+        let head = full_text.chars().take(25000).collect::<String>();
+        let tail_start = full_text.len().saturating_sub(25000);
+        let tail: String = full_text.chars().skip(tail_start).take(25000).collect();
+        format!("{}\n\n...（中间省略）...\n\n{}", head, tail)
+    } else {
+        full_text
+    };
+    
+    let user_message = ai::ChatMessage {
+        role: "user".to_string(),
+        content: Some(format!(
+            "请压缩以下转写内容（总时长: {:.1} 秒，共 {} 个片段）：\n\n{}",
+            duration,
+            segments.len(),
+            input_text
+        )),
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+        cache_control: None,
+    };
+    
+    // 构建非流式请求
+    let request = ai::ChatCompletionRequest {
+        model: compression_model.to_string(),
+        messages: vec![system_message, user_message],
+        tools: None,
+        tool_choice: None,
+        stream: false,
+        temperature: Some(0.3), // 使用较低温度以获得更稳定的压缩结果
+    };
+    
+    // 构建 URL
+    let url = ai::build_chat_url(&base_url);
+    
+    // 创建 HTTP 客户端
+    let client = reqwest::Client::new();
+    
+    // 发送请求
+    let response = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| format!("发送压缩请求失败: {}", e))?;
+    
+    // 检查响应状态
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response.text().await.unwrap_or_default();
+        eprintln!("压缩失败: {} - {}", status, error_text);
+        return Err(format!("压缩失败: {} - {}", status, error_text));
+    }
+    
+    // 解析响应
+    let completion_response: ai::ChatCompletionResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("解析压缩响应失败: {}", e))?;
+    
+    // 提取压缩后的内容
+    let compressed = completion_response
+        .choices
+        .first()
+        .and_then(|choice| choice.message.content.as_ref())
+        .map(|content| content.trim().to_string())
+        .ok_or_else(|| "AI 响应中没有内容".to_string())?;
+    
+    // 添加元信息
+    let final_compressed = format!(
+        "转写内容压缩摘要（原始时长: {:.1} 秒，{} 个片段，已压缩）\n\n{}",
+        duration,
+        segments.len(),
+        compressed
+    );
+    
+    // 打印压缩结果到控制台
+    eprintln!("========== 压缩结果 ==========");
+    eprintln!("任务ID: {}", task_id);
+    eprintln!("原始片段数: {}", segments.len());
+    eprintln!("原始时长: {:.1} 秒", duration);
+    eprintln!("压缩后内容长度: {} 字符", final_compressed.len());
+    eprintln!("压缩结果预览（前500字符）:");
+    let preview = if final_compressed.len() > 500 {
+        format!("{}...", &final_compressed[..500])
+    } else {
+        final_compressed.clone()
+    };
+    eprintln!("{}", preview);
+    eprintln!("==============================");
+    
+    // 更新数据库
+    tokio::task::spawn_blocking({
+        let db_path = db_path.clone();
+        let task_id = task_id.clone();
+        let final_compressed_clone = final_compressed.clone();
+        move || {
+            let conn = db::init_database(&db_path)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            
+            let mut task = db::get_task(&conn, &task_id)
+                .map_err(|e| format!("无法获取任务: {}", e))?
+                .ok_or_else(|| "任务不存在".to_string())?;
+            
+            task.compressed_content = Some(final_compressed_clone);
+            db::update_task(&conn, &task)
+                .map_err(|e| format!("无法更新任务: {}", e))?;
+            
+            Ok::<(), String>(())
+        }
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
+    
+    Ok(())
+}
+
 
 // 停止转写任务
 #[tauri::command]
@@ -2351,6 +2686,7 @@ async fn create_ai_config(
         model,
         created_at: now.clone(),
         updated_at: now,
+        is_compression_config: None,
     };
     
     let app_data_dir = get_app_data_dir(&app)?;
@@ -2407,6 +2743,7 @@ async fn update_ai_config(
         model,
         created_at: existing_config.created_at,
         updated_at: Utc::now().to_rfc3339(),
+        is_compression_config: existing_config.is_compression_config,
     };
     
     let config_clone = updated_config.clone();
@@ -2422,6 +2759,70 @@ async fn update_ai_config(
     .map_err(|e| format!("数据库操作失败: {}", e))??;
     
     Ok(updated_config)
+}
+
+// 设置压缩模型配置
+#[tauri::command]
+async fn set_compression_config(
+    config_id: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let db_path = db::get_db_path(&app_data_dir);
+    
+    // 先检查配置是否存在
+    let config_exists = tokio::task::spawn_blocking({
+        let db_path = db_path.clone();
+        let config_id = config_id.clone();
+        move || -> Result<bool, String> {
+            let conn = db::init_database(&db_path)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            let config = db::get_ai_config(&conn, &config_id)
+                .map_err(|e| format!("无法查询配置: {}", e))?;
+            Ok(config.is_some())
+        }
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
+    
+    if !config_exists {
+        return Err("AI 配置不存在".to_string());
+    }
+    
+    // 设置压缩配置
+    tokio::task::spawn_blocking({
+        let db_path = db_path.clone();
+        let config_id = config_id.clone();
+        move || -> Result<(), String> {
+            let conn = db::init_database(&db_path)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            db::set_compression_config(&conn, &config_id)
+                .map_err(|e| format!("无法设置压缩配置: {}", e))?;
+            Ok(())
+        }
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
+    
+    Ok(())
+}
+
+// 获取压缩模型配置
+#[tauri::command]
+async fn get_compression_config(
+    app: tauri::AppHandle,
+) -> Result<Option<AIConfig>, String> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let db_path = db::get_db_path(&app_data_dir);
+    
+    tokio::task::spawn_blocking(move || -> Result<Option<AIConfig>, String> {
+        let conn = db::init_database(&db_path)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        db::get_compression_config(&conn)
+            .map_err(|e| format!("无法获取压缩配置: {}", e))
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))?
 }
 
 // 删除 AI 配置
@@ -4233,6 +4634,103 @@ fn vtt_to_srt(vtt_content: &str) -> Result<String, String> {
     Ok(srt_lines.join("\n"))
 }
 
+// 清理时间戳字符串，移除额外的内容（如 WebVTT 的样式信息）
+fn clean_timestamp_string(time_str: &str) -> String {
+    // 时间戳格式应该是 HH:MM:SS,mmm 或 HH:MM:SS.mmm
+    // 移除时间戳后面可能存在的额外内容（空格、制表符后的所有内容）
+    let trimmed = time_str.trim();
+    
+    // 查找第一个空格或制表符的位置
+    if let Some(space_pos) = trimmed.find(|c: char| c == ' ' || c == '\t') {
+        // 如果找到空格，只取空格前的部分
+        trimmed[..space_pos].trim().to_string()
+    } else {
+        // 如果没有空格，使用整个字符串
+        trimmed.to_string()
+    }
+}
+
+// 清理字幕文本，移除 HTML 标签和内联时间戳标签
+fn clean_subtitle_text(text: &str, is_vtt: bool) -> String {
+    // 移除内联时间戳标签（格式：<HH:MM:SS.mmm> 或 <HH:MM:SS,mmm>）
+    // 使用字符遍历来识别和移除时间戳标签
+    let mut result = String::new();
+    let mut in_tag = false;
+    let mut tag_start = 0;
+    
+    for (i, ch) in text.char_indices() {
+        if ch == '<' {
+            // 检查是否是时间戳标签的开始
+            in_tag = true;
+            tag_start = i;
+        } else if ch == '>' && in_tag {
+            // 检查标签内容是否是时间戳格式
+            let tag_content = &text[tag_start + 1..i];
+            if is_timestamp_tag(tag_content) {
+                // 跳过这个时间戳标签
+                in_tag = false;
+                continue;
+            } else {
+                // 不是时间戳标签，保留原内容
+                result.push_str(&text[tag_start..=i]);
+                in_tag = false;
+            }
+        } else if !in_tag {
+            result.push(ch);
+        }
+    }
+    
+    // 如果是 VTT 格式，移除其他 HTML 标签
+    if is_vtt {
+        result = result
+            .replace("<c>", "")
+            .replace("</c>", "")
+            .replace("<b>", "")
+            .replace("</b>", "")
+            .replace("<i>", "")
+            .replace("</i>", "")
+            .replace("<u>", "")
+            .replace("</u>", "")
+            .replace("<v ", "")
+            .replace("</v>", "")
+            .replace("<ruby>", "")
+            .replace("</ruby>", "")
+            .replace("<rt>", "")
+            .replace("</rt>", "")
+            .replace("<rp>", "")
+            .replace("</rp>", "");
+    }
+    
+    result.trim().to_string()
+}
+
+// 检查字符串是否是时间戳标签内容（格式：HH:MM:SS.mmm 或 HH:MM:SS,mmm）
+fn is_timestamp_tag(content: &str) -> bool {
+    // 时间戳格式：HH:MM:SS.mmm 或 HH:MM:SS,mmm
+    // 简单检查：包含两个冒号，且长度在合理范围内
+    if content.matches(':').count() == 2 {
+        // 进一步检查格式
+        let parts: Vec<&str> = content.split(':').collect();
+        if parts.len() == 3 {
+            // 检查小时、分钟、秒的格式
+            let hour_ok = parts[0].len() == 2 && parts[0].chars().all(|c| c.is_ascii_digit());
+            let min_ok = parts[1].len() == 2 && parts[1].chars().all(|c| c.is_ascii_digit());
+            // 秒部分可能包含小数点或逗号
+            let sec_part = parts[2];
+            if let Some(dot_pos) = sec_part.find('.') {
+                let sec_ok = dot_pos == 2 && sec_part[..dot_pos].chars().all(|c| c.is_ascii_digit());
+                let ms_ok = sec_part[dot_pos+1..].len() == 3 && sec_part[dot_pos+1..].chars().all(|c| c.is_ascii_digit());
+                return hour_ok && min_ok && sec_ok && ms_ok;
+            } else if let Some(comma_pos) = sec_part.find(',') {
+                let sec_ok = comma_pos == 2 && sec_part[..comma_pos].chars().all(|c| c.is_ascii_digit());
+                let ms_ok = sec_part[comma_pos+1..].len() == 3 && sec_part[comma_pos+1..].chars().all(|c| c.is_ascii_digit());
+                return hour_ok && min_ok && sec_ok && ms_ok;
+            }
+        }
+    }
+    false
+}
+
 // 解析SRT或VTT文件并转换为JSON格式
 fn convert_srt_to_transcription_json(srt_path: &PathBuf) -> Result<String, String> {
     let content = std::fs::read_to_string(srt_path)
@@ -4292,12 +4790,13 @@ fn convert_srt_to_transcription_json(srt_path: &PathBuf) -> Result<String, Strin
             continue;
         }
         
-        let from_time_str = time_parts[0].trim();
-        let to_time_str = time_parts[1].trim();
+        // 清理时间戳，移除可能存在的额外内容（如 WebVTT 的 align:start position:0% 等）
+        let from_time_str = clean_timestamp_string(time_parts[0].trim());
+        let to_time_str = clean_timestamp_string(time_parts[1].trim());
         
-        let from_seconds = subtitle_time_to_seconds(from_time_str)
+        let from_seconds = subtitle_time_to_seconds(&from_time_str)
             .map_err(|e| format!("解析开始时间失败: {}", e))?;
-        let to_seconds = subtitle_time_to_seconds(to_time_str)
+        let to_seconds = subtitle_time_to_seconds(&to_time_str)
             .map_err(|e| format!("解析结束时间失败: {}", e))?;
         
         i += 1;
@@ -4306,20 +4805,8 @@ fn convert_srt_to_transcription_json(srt_path: &PathBuf) -> Result<String, Strin
         let mut text_lines = Vec::new();
         while i < lines.len() && !lines[i].trim().is_empty() {
             let text_line = lines[i].trim();
-            // 如果是 VTT 格式，移除 HTML 标签
-            let clean_text = if is_vtt {
-                text_line
-                    .replace("<c>", "")
-                    .replace("</c>", "")
-                    .replace("<b>", "")
-                    .replace("</b>", "")
-                    .replace("<i>", "")
-                    .replace("</i>", "")
-                    .replace("<u>", "")
-                    .replace("</u>", "")
-            } else {
-                text_line.to_string()
-            };
+            // 移除 HTML 标签和内联时间戳标签
+            let clean_text = clean_subtitle_text(text_line, is_vtt);
             if !clean_text.is_empty() {
                 text_lines.push(clean_text);
             }
@@ -4384,6 +4871,7 @@ pub fn run() {
         .manage(RunningExtractions::new())
         .manage(RunningStreams::new())
         .invoke_handler(tauri::generate_handler![
+            compress_transcription_content_manual,
             create_transcription_resource,
             create_transcription_resource_from_url,
             create_transcription_task,
@@ -4413,6 +4901,8 @@ pub fn run() {
             create_ai_config,
             update_ai_config,
             delete_ai_config,
+            set_compression_config,
+            get_compression_config,
             get_mcp_configs,
             get_mcp_config_full,
             save_mcp_config,

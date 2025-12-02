@@ -56,6 +56,7 @@ const ResourceDetailPage = () => {
     loadResourceAndTasks,
     loadTasks,
     resetTasks,
+    updateTask,
   } = useTranscriptionTasksManager({
     resourceId,
     message,
@@ -555,6 +556,7 @@ const ResourceDetailPage = () => {
             onCreateTask={handleShowCreateTaskModal}
             onTaskDeleted={handleTaskDeleted}
             onTaskStopped={handleTaskStopped}
+            onTaskUpdated={updateTask}
             playerRef={playerRef}
             currentTime={currentTime}
           />

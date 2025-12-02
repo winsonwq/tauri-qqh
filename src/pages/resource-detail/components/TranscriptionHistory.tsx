@@ -6,7 +6,7 @@ import { useAppSelector, useAppDispatch } from '../../../redux/hooks';
 import { clearLogs } from '../../../redux/slices/transcriptionLogsSlice';
 import { TranscriptionTask, TranscriptionTaskStatus } from '../../../models';
 import { TranscriptionResultJson } from '../../../models/TranscriptionResult';
-import { HiDocumentText, HiInformationCircle, HiTrash, HiStop, HiArrowDownTray } from 'react-icons/hi2';
+import { HiDocumentText, HiInformationCircle, HiTrash, HiStop, HiArrowDownTray, HiSparkles } from 'react-icons/hi2';
 import { getStatusText } from './transcriptionUtils';
 import TranscriptionJsonView from './TranscriptionJsonView';
 import TranscriptionInfoModal from './TranscriptionInfoModal';
@@ -26,6 +26,7 @@ interface TranscriptionHistoryProps {
   onCreateTask: () => void;
   onTaskDeleted?: () => void; // 任务删除后的回调
   onTaskStopped?: () => void; // 任务停止后的回调
+  onTaskUpdated?: (taskId: string, updatedTask: TranscriptionTask) => void; // 任务更新后的回调
   playerRef?: RefObject<PlayerRef | null>; // 播放器引用
   currentTime?: number; // 当前播放时间（秒）
 }
@@ -40,6 +41,7 @@ const TranscriptionHistory = ({
   onCreateTask,
   onTaskDeleted,
   onTaskStopped,
+  onTaskUpdated,
   playerRef,
   currentTime,
 }: TranscriptionHistoryProps) => {
@@ -52,6 +54,7 @@ const TranscriptionHistory = ({
   const [showInfoModal, setShowInfoModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [viewMode, setViewMode] = useState<'result' | 'log'>('result'); // 切换显示模式
+  const [isCompressing, setIsCompressing] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
   const previousTaskIdRef = useRef<string | null>(null); // 跟踪上一次选中的任务 ID
 
@@ -105,6 +108,44 @@ const TranscriptionHistory = ({
     } catch (err) {
       // 静默处理错误，只记录到控制台，不显示全局提示
       console.error('停止任务失败:', err);
+    }
+  };
+
+  // 手动触发压缩
+  const handleCompress = async () => {
+    if (!selectedTaskId || !selectedTask) return;
+    
+    // 检查任务是否已完成且有结果
+    if (selectedTask.status !== TranscriptionTaskStatus.COMPLETED) {
+      message.error('只有已完成的任务才能压缩');
+      return;
+    }
+    
+    if (!selectedTask.result) {
+      message.error('任务没有转写结果');
+      return;
+    }
+    
+    try {
+      setIsCompressing(true);
+      const result = await invoke<string>('compress_transcription_content_manual', {
+        taskId: selectedTaskId,
+      });
+      message.success(result || '压缩完成');
+      
+      // 只更新当前任务，而不是重新加载整个任务列表
+      if (onTaskUpdated && selectedTaskId) {
+        // 获取更新后的任务信息
+        const updatedTask = await invoke<TranscriptionTask>('get_transcription_task', {
+          taskId: selectedTaskId,
+        });
+        onTaskUpdated(selectedTaskId, updatedTask);
+      }
+    } catch (err) {
+      console.error('压缩失败:', err);
+      message.error(err instanceof Error ? err.message : '压缩失败');
+    } finally {
+      setIsCompressing(false);
     }
   };
 
@@ -256,7 +297,7 @@ const TranscriptionHistory = ({
           <div className="flex items-center justify-between mb-3 flex-shrink-0">
             <div className="flex items-center gap-2">
               <h3 className="text-lg font-semibold">
-                {viewMode === 'result' ? '转写结果' : '运行日志'}
+                {viewMode === 'result' ? '结果' : '日志'}
               </h3>
               {/* 如果任务正在运行，在标题旁边显示停止按钮 */}
               {selectedTask && selectedTask.status === TranscriptionTaskStatus.RUNNING && (
@@ -280,6 +321,18 @@ const TranscriptionHistory = ({
               )}
             </div>
             <div className="flex items-center gap-2">
+              {/* 压缩按钮：只在任务已完成且有结果时显示 */}
+              {selectedTask.status === TranscriptionTaskStatus.COMPLETED && 
+               selectedTask.result && (
+                <button
+                  className={`btn btn-sm btn-primary btn-ghost ${isCompressing ? 'loading' : ''}`}
+                  onClick={handleCompress}
+                  disabled={isCompressing}
+                  title="手动触发压缩转写内容"
+                >
+                  {!isCompressing && <HiSparkles className="w-4 h-4" />}
+                </button>
+              )}
               {/* 导出按钮 */}
               {selectedTask.status === TranscriptionTaskStatus.COMPLETED && 
                (jsonData?.transcription?.length ?? 0) > 0 && (
@@ -313,14 +366,14 @@ const TranscriptionHistory = ({
                       className={`join-item btn btn-sm ${viewMode === 'result' ? 'btn-active' : ''}`}
                       onClick={() => setViewMode('result')}
                     >
-                      转写结果
+                      结果
                     </button>
                   )}
                   <button
                     className={`join-item btn btn-sm ${viewMode === 'log' ? 'btn-active' : ''}`}
                     onClick={() => setViewMode('log')}
                   >
-                    运行日志
+                    日志
                   </button>
                 </div>
               )}
