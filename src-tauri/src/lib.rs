@@ -511,6 +511,35 @@ fn get_ytdlp_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Err("未找到 yt-dlp。请确保已安装 yt-dlp 并将其添加到系统 PATH 中，或将其放置在 tools/yt-dlp/macos-arm64/ 目录下。可以通过 'brew install yt-dlp' 或 'pip install yt-dlp' 安装。".to_string())
 }
 
+// 使用 YouTube oEmbed API 快速获取视频标题（仅适用于 YouTube）
+async fn get_youtube_title_from_oembed(url: &str) -> Result<String, String> {
+    // 使用 reqwest 的 URL 构建功能
+    let client = reqwest::Client::new();
+    let oembed_url = format!("https://www.youtube.com/oembed?url={}&format=json", 
+        url.replace('&', "%26").replace(' ', "%20").replace('#', "%23"));
+    
+    match client
+        .get(&oembed_url)
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+    {
+        Ok(response) => {
+            if response.status().is_success() {
+                if let Ok(json) = response.json::<serde_json::Value>().await {
+                    if let Some(title) = json.get("title").and_then(|t| t.as_str()) {
+                        return Ok(title.to_string());
+                    }
+                }
+            }
+            Err("无法从 oEmbed API 获取标题".to_string())
+        }
+        Err(e) => {
+            Err(format!("oEmbed API 请求失败: {}", e))
+        }
+    }
+}
+
 // 从URL获取视频标题（使用 yt-dlp）
 async fn get_video_title_from_url(url: &str, app: &tauri::AppHandle) -> Result<String, String> {
     // 获取 yt-dlp 路径
@@ -848,26 +877,43 @@ async fn create_transcription_resource_from_url(
         || name.starts_with("YouTube视频-") 
         || name.starts_with("Bilibili视频-") 
         || name.starts_with("外部视频-") {
-        // 尝试获取视频标题
-        match get_video_title_from_url(&url, &app).await {
-            Ok(title) => {
-                eprintln!("成功获取视频标题: {}", title);
-                title
-            }
-            Err(e) => {
-                eprintln!("获取视频标题失败: {}，使用提供的名称: {}", e, name);
-                // 如果获取失败，使用提供的名称（可能是默认提取的名称）
-                if name.is_empty() {
-                    // 如果 name 也为空，使用默认名称
-                    if let Some(Platform::Youtube) = platform {
+        // 对于 YouTube，优先使用快速的 oEmbed API
+        if let Some(Platform::Youtube) = platform {
+            match get_youtube_title_from_oembed(&url).await {
+                Ok(title) => {
+                    eprintln!("成功通过 oEmbed API 获取 YouTube 视频标题: {}", title);
+                    title
+                }
+                Err(e) => {
+                    eprintln!("oEmbed API 获取标题失败: {}，使用默认名称", e);
+                    // 如果 oEmbed 失败，使用默认名称快速创建，不等待 yt-dlp
+                    if name.is_empty() {
                         "YouTube视频".to_string()
-                    } else if let Some(Platform::Bilibili) = platform {
-                        "Bilibili视频".to_string()
                     } else {
-                        "外部视频".to_string()
+                        name
                     }
-                } else {
-                    name
+                }
+            }
+        } else {
+            // 对于其他平台（如 Bilibili），使用 yt-dlp 获取标题
+            match get_video_title_from_url(&url, &app).await {
+                Ok(title) => {
+                    eprintln!("成功获取视频标题: {}", title);
+                    title
+                }
+                Err(e) => {
+                    eprintln!("获取视频标题失败: {}，使用提供的名称: {}", e, name);
+                    // 如果获取失败，使用提供的名称（可能是默认提取的名称）
+                    if name.is_empty() {
+                        // 如果 name 也为空，使用默认名称
+                        if let Some(Platform::Bilibili) = platform {
+                            "Bilibili视频".to_string()
+                        } else {
+                            "外部视频".to_string()
+                        }
+                    } else {
+                        name
+                    }
                 }
             }
         }
