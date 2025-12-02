@@ -85,6 +85,10 @@ export interface ToolCall {
   }
 }
 
+export interface CacheControl {
+  type: 'ephemeral'
+}
+
 export interface AIMessage {
   id: string
   role: 'user' | 'assistant' | 'tool'
@@ -96,5 +100,6 @@ export interface AIMessage {
   reasoning?: string // thinking/reasoning 内容
   agentType?: AgentType // agent 类型（planner/executor/verifier）
   action?: AgentAction // agent 行为类型
+  cache_control?: CacheControl // 缓存控制（用于 OpenRouter 等支持 prompt caching 的提供商）
 }
 

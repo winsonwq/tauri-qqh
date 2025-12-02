@@ -119,7 +119,7 @@ export class AgentWorkflowEngine {
         await this.backend.chatCompletion({
           configId,
           messages,
-          tools: toolsToSend,
+          tools: toolsToSend || undefined,
           systemMessage: combinedSystemMessage,
           eventId
         });
@@ -251,7 +251,7 @@ export class AgentWorkflowEngine {
           await this.backend.chatCompletion({
             configId,
             messages,
-            tools: toolsToSend,
+            tools: toolsToSend || undefined,
             systemMessage: combinedSystemMessage,
             eventId
           });
@@ -691,13 +691,15 @@ export class AgentWorkflowEngine {
         );
 
         // 格式化工具结果为消息
+        // 根据 OpenRouter 最佳实践，为工具结果添加 ephemeral 缓存控制
         const toolResultMsg: AIMessage = {
           id: Date.now().toString() + Math.random(),
           role: 'tool',
           content: JSON.stringify(result),
           timestamp: new Date(),
           tool_call_id: toolCall.id,
-          name: toolCall.function.name
+          name: toolCall.function.name,
+          cache_control: { type: 'ephemeral' }
         };
 
         toolResults.push(toolResultMsg);

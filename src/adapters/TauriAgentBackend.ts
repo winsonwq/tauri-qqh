@@ -46,6 +46,7 @@ export class TauriAgentBackend implements IAgentBackend {
       toolCallId: message.tool_call_id || null,
       name: message.name || null,
       reasoning: message.reasoning || null,
+      // Note: cache_control is not saved to database as it's only used for API requests
     });
   }
 

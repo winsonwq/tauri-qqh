@@ -1,5 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+// Cache control 配置（用于 OpenRouter 等支持 prompt caching 的提供商）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CacheControl {
+    #[serde(rename = "type")]
+    pub cache_type: String, // "ephemeral"
+}
+
 // OpenAI 兼容的消息格式
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ChatMessage {
@@ -11,6 +18,8 @@ pub struct ChatMessage {
     pub tool_call_id: Option<String>,
     #[serde(default)]
     pub name: Option<String>, // tool name
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<CacheControl>,
 }
 
 // 工具调用
@@ -178,5 +187,24 @@ pub fn build_chat_url(base_url: &str) -> String {
     
     // 否则添加 /v1/chat/completions
     format!("{}/v1/chat/completions", base)
+}
+
+// 应用 cache control 到消息列表
+// 根据 OpenRouter 最佳实践，为工具调用结果添加 ephemeral 缓存标记
+// 这样可以优化缓存使用，特别是对于像 "get task info" 这样的大型工具响应
+// 
+// 注意：此函数是幂等的，即使消息已经有 cache_control 也会被覆盖
+// 这确保了从数据库加载的历史消息也能正确应用缓存控制
+pub fn apply_cache_control(messages: &mut Vec<ChatMessage>) {
+    for msg in messages.iter_mut() {
+        // 为 tool 角色的消息添加 ephemeral 缓存控制
+        // 工具结果通常是短暂的上下文信息，适合使用 ephemeral 缓存
+        // 即使消息来自数据库（没有 cache_control），也会在这里自动添加
+        if msg.role == "tool" {
+            msg.cache_control = Some(CacheControl {
+                cache_type: "ephemeral".to_string(),
+            });
+        }
+    }
 }
 

@@ -3,6 +3,10 @@ import { Message as ChatMessage } from '../models'
 import { AgentType, AgentAction } from '../agents/agentTypes'
 import { parsePartialJson } from './partialJsonParser'
 
+export interface CacheControl {
+  type: 'ephemeral'
+}
+
 export interface AIMessage {
   id: string
   role: 'user' | 'assistant' | 'tool'
@@ -15,6 +19,7 @@ export interface AIMessage {
   pendingToolCalls?: ToolCall[] // 待确认的工具调用
   agentType?: AgentType // agent 类型（planner/executor/verifier）
   action?: AgentAction // agent 行为类型
+  cache_control?: CacheControl // 缓存控制（用于 OpenRouter 等支持 prompt caching 的提供商）
 }
 
 /**
@@ -59,6 +64,7 @@ function inferAgentTypeFromContent(content: string): AgentType | undefined {
 
 /**
  * 将数据库消息格式转换为前端 AIMessage 格式
+ * 自动为 tool 消息添加 cache_control（用于 OpenRouter prompt caching）
  */
 export function convertChatMessageToAIMessage(msg: ChatMessage): AIMessage {
   let tool_calls: ToolCall[] | undefined
@@ -75,6 +81,12 @@ export function convertChatMessageToAIMessage(msg: ChatMessage): AIMessage {
     ? inferAgentTypeFromContent(msg.content)
     : undefined
 
+  // 为 tool 消息自动添加 cache_control
+  // 即使消息来自数据库，也需要在发送给 AI 时添加缓存标记
+  const cache_control = msg.role === 'tool' 
+    ? { type: 'ephemeral' as const } 
+    : undefined
+
   return {
     id: msg.id,
     role: msg.role as 'user' | 'assistant' | 'tool',
@@ -85,12 +97,14 @@ export function convertChatMessageToAIMessage(msg: ChatMessage): AIMessage {
     name: msg.name || undefined,
     reasoning: msg.reasoning || undefined,
     agentType,
+    cache_control,
   }
 }
 
 /**
  * 将 AIMessage 数组转换为 API 消息格式
  * 会验证 tool 消息的 tool_call_id 是否在之前的 assistant 消息中有对应的 tool_calls
+ * 并为 tool 消息自动添加 cache_control（用于 OpenRouter 等支持 prompt caching 的提供商）
  */
 export function convertAIMessagesToChatMessages(messages: AIMessage[]) {
   // 按顺序收集有效的 tool_call IDs（只收集在当前消息之前的）
@@ -101,6 +115,7 @@ export function convertAIMessagesToChatMessages(messages: AIMessage[]) {
     tool_calls?: ToolCall[]
     tool_call_id?: string
     name?: string
+    cache_control?: CacheControl
   }> = []
   
   for (const m of messages) {
@@ -137,12 +152,17 @@ export function convertAIMessagesToChatMessages(messages: AIMessage[]) {
       continue
     }
     
+    // 为 tool 消息自动添加 cache_control
+    // 根据 OpenRouter 最佳实践，工具结果应该使用 ephemeral 缓存
+    const cache_control = m.role === 'tool' ? { type: 'ephemeral' as const } : undefined
+    
     result.push({
       role: m.role,
       content: m.content || '', // 如果没有 content，使用空字符串
       tool_calls: m.tool_calls,
       tool_call_id: m.tool_call_id,
       name: m.name,
+      cache_control,
     })
   }
   

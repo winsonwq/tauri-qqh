@@ -2727,9 +2727,15 @@ async fn chat_completion(
             tool_calls: None,
             tool_call_id: None,
             name: None,
+            cache_control: None,
         });
     }
     chat_messages.extend(messages);
+    
+    // 应用 cache control 优化
+    // 为工具调用结果（如 "get task info"）添加 ephemeral 缓存标记
+    // 这样可以优化 OpenRouter 等支持 prompt caching 的提供商的缓存使用
+    ai::apply_cache_control(&mut chat_messages);
     
     // 转换 MCP 工具为 OpenAI 工具
     let openai_tools = if let Some(mcp_tools) = tools {
@@ -3641,6 +3647,7 @@ async fn summarize_chat_title(
             tool_calls: None,
             tool_call_id: None,
             name: None,
+            cache_control: None,
         })
         .collect();
     
@@ -3656,6 +3663,7 @@ async fn summarize_chat_title(
         tool_calls: None,
         tool_call_id: None,
         name: None,
+        cache_control: None,
     };
     
     let mut all_messages = vec![system_message];

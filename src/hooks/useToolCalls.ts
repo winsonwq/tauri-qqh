@@ -80,6 +80,7 @@ export function useToolCalls({
             timestamp: new Date(),
             tool_call_id: toolCall.id,
             name: toolCall.function.name,
+            cache_control: { type: 'ephemeral' },
           })
         } catch (err) {
           console.error('工具调用失败:', err)
