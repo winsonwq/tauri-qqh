@@ -1,11 +1,13 @@
 import { memo, useMemo, RefObject } from 'react'
 import Player, { PlayerRef } from '../../../components/Player'
-import { TranscriptionResource, ResourceType } from '../../../models'
+import { TranscriptionResource, ResourceType, TranscriptionTask } from '../../../models'
 import { useAppSelector } from '../../../redux/hooks'
 import { EditableInput } from '../../../components/EditableInput'
+import TopicsTimeline from './TopicsTimeline'
 
 interface ResourceInfoCardProps {
   resource: TranscriptionResource
+  selectedTask?: TranscriptionTask | null
   audioSrc: string | null
   videoSrc: string | null
   subtitleUrl?: string | null // WebVTT 字幕的 URL
@@ -17,6 +19,7 @@ interface ResourceInfoCardProps {
 
 const ResourceInfoCard = memo(({
   resource,
+  selectedTask,
   audioSrc,
   videoSrc,
   subtitleUrl,
@@ -134,6 +137,16 @@ const ResourceInfoCard = memo(({
           })}
         </div>
       </div>
+
+      {/* Topics Timeline */}
+      {selectedTask?.topics && selectedTask.topics.length > 0 && (
+        <div className="mt-6 pt-4 border-t border-base-300">
+          <TopicsTimeline
+            topics={selectedTask.topics}
+            playerRef={playerRef}
+          />
+        </div>
+      )}
     </div>
   )
 })

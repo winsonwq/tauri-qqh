@@ -51,6 +51,12 @@ pub fn init_database(db_path: &PathBuf) -> SqlResult<Connection> {
         [],
     );
     
+    // 迁移：添加 topics 字段（可选，JSON 格式）
+    let _ = conn.execute(
+        "ALTER TABLE transcription_resources ADD COLUMN topics TEXT",
+        [],
+    );
+    
     // 迁移：如果 transcription_resources 表存在但有 status 字段，则移除（SQLite 不支持直接删除列，这里只是标记）
     // 注意：SQLite 不支持 ALTER TABLE DROP COLUMN，如果需要完全移除，需要重建表
     // 这里先保留字段但不使用，后续可以通过重建表来完全移除
@@ -76,6 +82,12 @@ pub fn init_database(db_path: &PathBuf) -> SqlResult<Connection> {
     // 迁移：如果 transcription_tasks 表存在但没有 compressed_content 字段，则添加
     let _ = conn.execute(
         "ALTER TABLE transcription_tasks ADD COLUMN compressed_content TEXT",
+        [],
+    );
+    
+    // 迁移：如果 transcription_tasks 表存在但没有 topics 字段，则添加
+    let _ = conn.execute(
+        "ALTER TABLE transcription_tasks ADD COLUMN topics TEXT",
         [],
     );
     
@@ -220,6 +232,20 @@ fn string_to_platform(s: Option<String>) -> Option<Platform> {
     })
 }
 
+// 将 topics 序列化为 JSON 字符串
+fn topics_to_string(topics: &Option<Vec<crate::Topic>>) -> Option<String> {
+    topics.as_ref().and_then(|t| {
+        serde_json::to_string(t).ok()
+    })
+}
+
+// 从 JSON 字符串反序列化 topics
+fn string_to_topics(s: Option<String>) -> Option<Vec<crate::Topic>> {
+    s.and_then(|s| {
+        serde_json::from_str(&s).ok()
+    })
+}
+
 // 资源 CRUD 操作
 pub fn create_resource(conn: &Connection, resource: &TranscriptionResource) -> SqlResult<()> {
     conn.execute(
@@ -357,9 +383,9 @@ pub fn get_resource(conn: &Connection, resource_id: &str) -> SqlResult<Option<Tr
 }
 
 pub fn get_all_resources(conn: &Connection) -> SqlResult<Vec<TranscriptionResource>> {
-    // 尝试最新格式（包含 source_type, platform 和 cover_url）
+    // 尝试最新格式（包含 source_type, platform, cover_url 和 topics）
     let stmt = conn.prepare(
-        "SELECT id, name, file_path, resource_type, source_type, platform, extracted_audio_path, latest_completed_task_id, cover_url, created_at, updated_at
+        "SELECT id, name, file_path, resource_type, source_type, platform, extracted_audio_path, latest_completed_task_id, cover_url, topics, created_at, updated_at
          FROM transcription_resources
          ORDER BY created_at DESC"
     );
@@ -376,8 +402,8 @@ pub fn get_all_resources(conn: &Connection) -> SqlResult<Vec<TranscriptionResour
                 extracted_audio_path: row.get(6)?,
                 latest_completed_task_id: row.get(7)?,
                 cover_url: row.get(8)?,
-                created_at: row.get(9)?,
-                updated_at: row.get(10)?,
+                created_at: row.get(10)?,
+                updated_at: row.get(11)?,
             })
         })?;
         
@@ -712,8 +738,8 @@ pub fn create_task(conn: &Connection, task: &TranscriptionTask) -> SqlResult<()>
     
     conn.execute(
         "INSERT INTO transcription_tasks
-         (id, resource_id, status, created_at, completed_at, result, error, log, params, compressed_content)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+         (id, resource_id, status, created_at, completed_at, result, error, log, params, compressed_content, topics)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             task.id,
             task.resource_id,
@@ -725,12 +751,46 @@ pub fn create_task(conn: &Connection, task: &TranscriptionTask) -> SqlResult<()>
             task.log,
             params_json,
             task.compressed_content,
+            topics_to_string(&task.topics),
         ],
     )?;
     Ok(())
 }
 
 pub fn get_task(conn: &Connection, task_id: &str) -> SqlResult<Option<TranscriptionTask>> {
+    // 尝试最新格式（包含 topics）
+    let stmt = conn.prepare(
+        "SELECT id, resource_id, status, created_at, completed_at, result, error, log, params, compressed_content, topics
+         FROM transcription_tasks WHERE id = ?1"
+    );
+    
+    if let Ok(mut stmt) = stmt {
+        let task_iter = stmt.query_map(params![task_id], |row| {
+            let params_json: String = row.get(8)?;
+            let params: TranscriptionParams = serde_json::from_str(&params_json)
+                .map_err(|_| rusqlite::Error::InvalidColumnType(8, "params".to_string(), rusqlite::types::Type::Text))?;
+            
+            Ok(TranscriptionTask {
+                id: row.get(0)?,
+                resource_id: row.get(1)?,
+                status: row.get(2)?,
+                created_at: row.get(3)?,
+                completed_at: row.get(4)?,
+                result: row.get(5)?,
+                error: row.get(6)?,
+                log: row.get(7)?,
+                compressed_content: row.get(9)?,
+                topics: string_to_topics(row.get(10)?),
+                params,
+            })
+        })?;
+        
+        for task in task_iter {
+            return Ok(Some(task?));
+        }
+    }
+    
+    // 尝试旧格式（没有 topics）
     let mut stmt = conn.prepare(
         "SELECT id, resource_id, status, created_at, completed_at, result, error, log, params, compressed_content
          FROM transcription_tasks WHERE id = ?1"
@@ -751,6 +811,7 @@ pub fn get_task(conn: &Connection, task_id: &str) -> SqlResult<Option<Transcript
             error: row.get(6)?,
             log: row.get(7)?,
             compressed_content: row.get(9)?,
+            topics: None, // 默认值
             params,
         })
     })?;
@@ -762,6 +823,43 @@ pub fn get_task(conn: &Connection, task_id: &str) -> SqlResult<Option<Transcript
 }
 
 pub fn get_tasks_by_resource(conn: &Connection, resource_id: &str) -> SqlResult<Vec<TranscriptionTask>> {
+    // 尝试最新格式（包含 topics）
+    let stmt = conn.prepare(
+        "SELECT id, resource_id, status, created_at, completed_at, result, error, log, params, compressed_content, topics
+         FROM transcription_tasks
+         WHERE resource_id = ?1
+         ORDER BY created_at DESC"
+    );
+    
+    if let Ok(mut stmt) = stmt {
+        let task_iter = stmt.query_map(params![resource_id], |row| {
+            let params_json: String = row.get(8)?;
+            let params: TranscriptionParams = serde_json::from_str(&params_json)
+                .map_err(|_| rusqlite::Error::InvalidColumnType(8, "params".to_string(), rusqlite::types::Type::Text))?;
+            
+            Ok(TranscriptionTask {
+                id: row.get(0)?,
+                resource_id: row.get(1)?,
+                status: row.get(2)?,
+                created_at: row.get(3)?,
+                completed_at: row.get(4)?,
+                result: row.get(5)?,
+                error: row.get(6)?,
+                log: row.get(7)?,
+                compressed_content: row.get(9)?,
+                topics: string_to_topics(row.get(10)?),
+                params,
+            })
+        })?;
+        
+        let mut tasks = Vec::new();
+        for task in task_iter {
+            tasks.push(task?);
+        }
+        return Ok(tasks);
+    }
+    
+    // 尝试旧格式（没有 topics）
     let mut stmt = conn.prepare(
         "SELECT id, resource_id, status, created_at, completed_at, result, error, log, params, compressed_content
          FROM transcription_tasks
@@ -784,6 +882,7 @@ pub fn get_tasks_by_resource(conn: &Connection, resource_id: &str) -> SqlResult<
             error: row.get(6)?,
             log: row.get(7)?,
             compressed_content: row.get(9)?,
+            topics: None, // 默认值
             params,
         })
     })?;
@@ -796,6 +895,42 @@ pub fn get_tasks_by_resource(conn: &Connection, resource_id: &str) -> SqlResult<
 }
 
 pub fn get_all_tasks(conn: &Connection) -> SqlResult<Vec<TranscriptionTask>> {
+    // 尝试最新格式（包含 topics）
+    let stmt = conn.prepare(
+        "SELECT id, resource_id, status, created_at, completed_at, result, error, log, params, compressed_content, topics
+         FROM transcription_tasks
+         ORDER BY created_at DESC"
+    );
+    
+    if let Ok(mut stmt) = stmt {
+        let task_iter = stmt.query_map([], |row| {
+            let params_json: String = row.get(8)?;
+            let params: TranscriptionParams = serde_json::from_str(&params_json)
+                .map_err(|_| rusqlite::Error::InvalidColumnType(8, "params".to_string(), rusqlite::types::Type::Text))?;
+            
+            Ok(TranscriptionTask {
+                id: row.get(0)?,
+                resource_id: row.get(1)?,
+                status: row.get(2)?,
+                created_at: row.get(3)?,
+                completed_at: row.get(4)?,
+                result: row.get(5)?,
+                error: row.get(6)?,
+                log: row.get(7)?,
+                compressed_content: row.get(9)?,
+                topics: string_to_topics(row.get(10)?),
+                params,
+            })
+        })?;
+        
+        let mut tasks = Vec::new();
+        for task in task_iter {
+            tasks.push(task?);
+        }
+        return Ok(tasks);
+    }
+    
+    // 尝试旧格式（没有 topics）
     let mut stmt = conn.prepare(
         "SELECT id, resource_id, status, created_at, completed_at, result, error, log, params, compressed_content
          FROM transcription_tasks
@@ -817,6 +952,7 @@ pub fn get_all_tasks(conn: &Connection) -> SqlResult<Vec<TranscriptionTask>> {
             error: row.get(6)?,
             log: row.get(7)?,
             compressed_content: row.get(9)?,
+            topics: None, // 默认值
             params,
         })
     })?;
@@ -832,6 +968,32 @@ pub fn update_task(conn: &Connection, task: &TranscriptionTask) -> SqlResult<()>
     let params_json = serde_json::to_string(&task.params)
         .map_err(|_e| rusqlite::Error::InvalidColumnType(0, "params".to_string(), rusqlite::types::Type::Text))?;
     
+    // 尝试最新格式（包含 topics）
+    let result = conn.execute(
+        "UPDATE transcription_tasks
+         SET resource_id = ?2, status = ?3, created_at = ?4, completed_at = ?5,
+             result = ?6, error = ?7, log = ?8, params = ?9, compressed_content = ?10, topics = ?11
+         WHERE id = ?1",
+        params![
+            task.id,
+            task.resource_id,
+            task.status,
+            task.created_at,
+            task.completed_at,
+            task.result,
+            task.error,
+            task.log,
+            params_json,
+            task.compressed_content,
+            topics_to_string(&task.topics),
+        ],
+    );
+    
+    if result.is_ok() {
+        return Ok(());
+    }
+    
+    // 尝试旧格式（没有 topics）
     conn.execute(
         "UPDATE transcription_tasks
          SET resource_id = ?2, status = ?3, created_at = ?4, completed_at = ?5,

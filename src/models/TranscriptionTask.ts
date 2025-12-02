@@ -1,3 +1,5 @@
+import { Topic } from './TranscriptionResource'
+
 // 转写任务模型
 export interface TranscriptionTask {
   id: string; // 唯一标识符
@@ -9,6 +11,8 @@ export interface TranscriptionTask {
   error?: string; // 错误信息
   log?: string; // 运行日志（stdout + stderr）
   params: TranscriptionParams; // 转写参数
+  compressed_content?: string; // 压缩后的转写内容
+  topics?: Topic[]; // Topics 列表
 }
 
 // 转写任务状态枚举

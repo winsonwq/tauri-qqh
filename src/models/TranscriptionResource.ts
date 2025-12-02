@@ -17,6 +17,20 @@ export enum Platform {
   OTHER = 'other',
 }
 
+// Topic 时间范围
+export interface TopicTimeRange {
+  start: number; // 开始时间（秒）
+  end: number;   // 结束时间（秒）
+}
+
+// Topic 模型
+export interface Topic {
+  name: string;           // topic 名称
+  color: string;          // 颜色（hex 格式，如 #FF5733）
+  opacity: number;        // 透明度（0.0-1.0）
+  time_ranges: TopicTimeRange[]; // 时间范围列表
+}
+
 // 转写资源模型
 export interface TranscriptionResource {
   id: string; // 唯一标识符

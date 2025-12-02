@@ -6,7 +6,7 @@ import { useAppSelector, useAppDispatch } from '../../../redux/hooks';
 import { clearLogs } from '../../../redux/slices/transcriptionLogsSlice';
 import { TranscriptionTask, TranscriptionTaskStatus } from '../../../models';
 import { TranscriptionResultJson } from '../../../models/TranscriptionResult';
-import { HiDocumentText, HiInformationCircle, HiTrash, HiStop, HiArrowDownTray, HiSparkles } from 'react-icons/hi2';
+import { HiDocumentText, HiInformationCircle, HiTrash, HiStop, HiArrowDownTray, HiSparkles, HiTag } from 'react-icons/hi2';
 import { getStatusText } from './transcriptionUtils';
 import TranscriptionJsonView from './TranscriptionJsonView';
 import TranscriptionInfoModal from './TranscriptionInfoModal';
@@ -55,6 +55,7 @@ const TranscriptionHistory = ({
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [viewMode, setViewMode] = useState<'result' | 'log'>('result'); // 切换显示模式
   const [isCompressing, setIsCompressing] = useState(false);
+  const [isExtractingTopics, setIsExtractingTopics] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
   const previousTaskIdRef = useRef<string | null>(null); // 跟踪上一次选中的任务 ID
 
@@ -108,6 +109,43 @@ const TranscriptionHistory = ({
     } catch (err) {
       // 静默处理错误，只记录到控制台，不显示全局提示
       console.error('停止任务失败:', err);
+    }
+  };
+
+  // 手动触发提取 topics
+  const handleExtractTopics = async () => {
+    if (!selectedTaskId || !selectedTask) return;
+    
+    // 检查任务是否已完成且有压缩内容
+    if (selectedTask.status !== TranscriptionTaskStatus.COMPLETED) {
+      message.error('只有已完成的任务才能提取 topics');
+      return;
+    }
+    
+    if (!selectedTask.compressed_content) {
+      message.error('任务尚未压缩，无法提取 topics');
+      return;
+    }
+    
+    try {
+      setIsExtractingTopics(true);
+      const result = await invoke<string>('extract_topics_manual', {
+        taskId: selectedTaskId,
+      });
+      message.success(result || 'Topics 提取完成');
+      
+      // 更新当前任务
+      if (onTaskUpdated && selectedTaskId) {
+        const updatedTask = await invoke<TranscriptionTask>('get_transcription_task', {
+          taskId: selectedTaskId,
+        });
+        onTaskUpdated(selectedTaskId, updatedTask);
+      }
+    } catch (err) {
+      console.error('提取 topics 失败:', err);
+      message.error(err instanceof Error ? err.message : '提取 topics 失败');
+    } finally {
+      setIsExtractingTopics(false);
     }
   };
 
@@ -321,6 +359,18 @@ const TranscriptionHistory = ({
               )}
             </div>
             <div className="flex items-center gap-2">
+              {/* 提取 topics 按钮：只在任务已完成且有压缩内容时显示 */}
+              {selectedTask.status === TranscriptionTaskStatus.COMPLETED && 
+               selectedTask.compressed_content && (
+                <button
+                  className={`btn btn-sm btn-primary btn-ghost ${isExtractingTopics ? 'loading' : ''}`}
+                  onClick={handleExtractTopics}
+                  disabled={isExtractingTopics}
+                  title="手动触发提取 topics"
+                >
+                  {!isExtractingTopics && <HiTag className="w-4 h-4" />}
+                </button>
+              )}
               {/* 压缩按钮：只在任务已完成且有结果时显示 */}
               {selectedTask.status === TranscriptionTaskStatus.COMPLETED && 
                selectedTask.result && (

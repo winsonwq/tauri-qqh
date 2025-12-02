@@ -54,6 +54,22 @@ pub enum Platform {
     Other,
 }
 
+// Topic 时间范围
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TopicTimeRange {
+    pub start: f64, // 开始时间（秒）
+    pub end: f64,   // 结束时间（秒）
+}
+
+// Topic 模型
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Topic {
+    pub name: String,           // topic 名称
+    pub color: String,          // 颜色（hex 格式，如 #FF5733）
+    pub opacity: f64,          // 透明度（0.0-1.0）
+    pub time_ranges: Vec<TopicTimeRange>, // 时间范围列表
+}
+
 // 转写资源模型
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TranscriptionResource {
@@ -99,6 +115,8 @@ pub struct TranscriptionTask {
     pub log: Option<String>, // 运行日志（stdout + stderr）
     pub params: TranscriptionParams,
     pub compressed_content: Option<String>, // 压缩后的转写内容
+    #[serde(default)]
+    pub topics: Option<Vec<Topic>>, // Topics 列表
 }
 
 // 转写参数
@@ -991,6 +1009,7 @@ async fn create_transcription_task(
         log: None,
         params,
         compressed_content: None,
+        topics: None,
     };
     
     // 保存到数据库
@@ -1888,6 +1907,308 @@ async fn compress_transcription_after_completion(
     })
     .await
     .map_err(|e| format!("数据库操作失败: {}", e))??;
+    
+    // 压缩完成后，自动提取 topics
+    let task_id_clone = task_id.clone();
+    let db_path_clone = db_path.clone();
+    tokio::spawn(async move {
+        // 添加一个小的延迟，确保数据库写入完全完成
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        
+        if let Err(e) = extract_topics_after_compression(
+            task_id_clone,
+            db_path_clone,
+        ).await {
+            eprintln!("提取 topics 失败: {}", e);
+        }
+    });
+    
+    Ok(())
+}
+
+// 手动触发提取 topics（Tauri 命令）
+#[tauri::command]
+async fn extract_topics_manual(
+    task_id: String,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let db_path = db::get_db_path(&app_data_dir);
+    
+    // 获取任务信息并调用提取函数
+    let compressed_content = tokio::task::spawn_blocking({
+        let db_path = db_path.clone();
+        let task_id = task_id.clone();
+        move || -> Result<String, String> {
+            let conn = db::init_database(&db_path)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            
+            let task = db::get_task(&conn, &task_id)
+                .map_err(|e| format!("无法获取任务: {}", e))?
+                .ok_or_else(|| "任务不存在".to_string())?;
+            
+            // 检查任务是否已完成且有压缩内容
+            if task.status != "completed" {
+                return Err("任务尚未完成，无法提取 topics".to_string());
+            }
+            
+            let compressed = task.compressed_content
+                .ok_or_else(|| "任务尚未压缩，无法提取 topics".to_string())?;
+            
+            Ok(compressed)
+        }
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
+    
+    // 调用提取函数并等待完成
+    extract_topics_internal(task_id, compressed_content, db_path).await?;
+    
+    Ok("Topics 提取完成".to_string())
+}
+
+// 提取 topics（在压缩完成后自动调用）
+async fn extract_topics_after_compression(
+    task_id: String,
+    db_path: PathBuf,
+) -> Result<(), String> {
+    eprintln!("开始提取 topics，任务ID: {}", task_id);
+    
+    // 获取任务信息
+    let compressed_content = tokio::task::spawn_blocking({
+        let db_path = db_path.clone();
+        let task_id = task_id.clone();
+        move || -> Result<String, String> {
+            let conn = db::init_database(&db_path)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            
+            let task = db::get_task(&conn, &task_id)
+                .map_err(|e| format!("无法获取任务: {}", e))?
+                .ok_or_else(|| "任务不存在".to_string())?;
+            
+            // 检查任务是否已完成且有压缩内容
+            if task.status != "completed" {
+                return Err("任务尚未完成，无法提取 topics".to_string());
+            }
+            
+            let compressed = task.compressed_content
+                .ok_or_else(|| "任务尚未压缩，无法提取 topics".to_string())?;
+            
+            Ok(compressed)
+        }
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
+    
+    extract_topics_internal(task_id, compressed_content, db_path).await
+}
+
+// 提取 topics 的内部实现
+async fn extract_topics_internal(
+    task_id: String,
+    compressed_content: String,
+    db_path: PathBuf,
+) -> Result<(), String> {
+    // 获取压缩配置（使用相同的 AI 配置）
+    let compression_config = tokio::task::spawn_blocking({
+        let db_path = db_path.clone();
+        move || -> Result<Option<AIConfig>, String> {
+            let conn = db::init_database(&db_path)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            db::get_compression_config(&conn)
+                .map_err(|e| format!("无法获取压缩配置: {}", e))
+        }
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
+    
+    let compression_config = compression_config.ok_or_else(|| {
+        "未设置压缩模型配置，无法提取 topics".to_string()
+    })?;
+    
+    let compression_model = compression_config.model;
+    let base_url = compression_config.base_url;
+    let api_key = compression_config.api_key;
+    
+    // 构建提取 topics 的提示词
+    let system_message = ai::ChatMessage {
+        role: "system".to_string(),
+        content: Some(
+            "你是一个专业的视频内容分析助手。你的任务是从视频转写内容中提取相关的 topics（主题），并为每个 topic 标注时间范围。\n\n要求：\n1. 分析转写内容，识别出几个主要的 topics（主题）\n2. 为每个 topic 分配一个唯一的颜色（hex 格式，如 #FF5733），颜色应该符合 daisyui 的配色方案，在 light 和 dark 模式下都能良好显示\n3. 每个 topic 的透明度设置为 0.6（用于叠加显示）\n4. 为每个 topic 提取对应的时间范围（可能有多个时间范围）\n5. 时间范围使用秒数（浮点数），与转写结果中的 offsets 字段格式一致\n6. 输出格式必须是有效的 JSON，格式如下：\n{\n  \"topics\": [\n    {\n      \"name\": \"topic 名称\",\n      \"color\": \"#FF5733\",\n      \"opacity\": 0.6,\n      \"time_ranges\": [\n        {\"start\": 10.5, \"end\": 45.2},\n        {\"start\": 120.3, \"end\": 180.7}\n      ]\n    }\n  ]\n}\n7. 确保颜色机制在响应中保留，每个 topic 都有唯一的颜色".to_string(),
+        ),
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+        cache_control: None,
+    };
+    
+    let user_message = ai::ChatMessage {
+        role: "user".to_string(),
+        content: Some(format!(
+            "请从以下转写内容中提取 topics：\n\n{}",
+            compressed_content
+        )),
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+        cache_control: None,
+    };
+    
+    // 构建非流式请求
+    let request = ai::ChatCompletionRequest {
+        model: compression_model.to_string(),
+        messages: vec![system_message, user_message],
+        tools: None,
+        tool_choice: None,
+        stream: false,
+        temperature: Some(0.7),
+    };
+    
+    // 构建 URL
+    let url = ai::build_chat_url(&base_url);
+    
+    // 创建 HTTP 客户端
+    let client = reqwest::Client::new();
+    
+    // 发送请求
+    let response = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| format!("发送 topics 提取请求失败: {}", e))?;
+    
+    // 检查响应状态
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response.text().await.unwrap_or_default();
+        eprintln!("提取 topics 失败: {} - {}", status, error_text);
+        return Err(format!("提取 topics 失败: {} - {}", status, error_text));
+    }
+    
+    // 解析响应
+    let completion_response: ai::ChatCompletionResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("解析 topics 提取响应失败: {}", e))?;
+    
+    // 提取响应内容
+    let content = completion_response
+        .choices
+        .first()
+        .and_then(|choice| choice.message.content.as_ref())
+        .map(|content| content.trim().to_string())
+        .ok_or_else(|| "AI 响应中没有内容".to_string())?;
+    
+    // 尝试从响应中提取 JSON（可能包含 markdown 代码块）
+    let json_content = if content.starts_with("```") {
+        // 提取代码块中的 JSON
+        let lines: Vec<&str> = content.lines().collect();
+        let mut json_lines = Vec::new();
+        let mut in_code_block = false;
+        for line in lines {
+            if line.trim().starts_with("```") {
+                in_code_block = !in_code_block;
+                continue;
+            }
+            if in_code_block {
+                json_lines.push(line);
+            }
+        }
+        json_lines.join("\n")
+    } else {
+        content
+    };
+    
+    // 解析 JSON
+    let topics_data: serde_json::Value = serde_json::from_str(&json_content)
+        .map_err(|e| format!("无法解析 topics JSON: {}，内容: {}", e, json_content))?;
+    
+    let topics_array = topics_data
+        .get("topics")
+        .and_then(|t| t.as_array())
+        .ok_or_else(|| "JSON 中没有 topics 数组".to_string())?;
+    
+    // 转换为 Topic 结构
+    let mut topics = Vec::new();
+    for topic_value in topics_array {
+        let name = topic_value
+            .get("name")
+            .and_then(|n| n.as_str())
+            .ok_or_else(|| "topic 缺少 name 字段".to_string())?
+            .to_string();
+        
+        let color = topic_value
+            .get("color")
+            .and_then(|c| c.as_str())
+            .ok_or_else(|| "topic 缺少 color 字段".to_string())?
+            .to_string();
+        
+        let opacity = topic_value
+            .get("opacity")
+            .and_then(|o| o.as_f64())
+            .unwrap_or(0.6);
+        
+        let time_ranges_value = topic_value
+            .get("time_ranges")
+            .and_then(|tr| tr.as_array())
+            .ok_or_else(|| "topic 缺少 time_ranges 字段".to_string())?;
+        
+        let mut time_ranges = Vec::new();
+        for tr_value in time_ranges_value {
+            let start = tr_value
+                .get("start")
+                .and_then(|s| s.as_f64())
+                .ok_or_else(|| "time_range 缺少 start 字段".to_string())?;
+            
+            let end = tr_value
+                .get("end")
+                .and_then(|e| e.as_f64())
+                .ok_or_else(|| "time_range 缺少 end 字段".to_string())?;
+            
+            time_ranges.push(TopicTimeRange { start, end });
+        }
+        
+        topics.push(Topic {
+            name,
+            color,
+            opacity,
+            time_ranges,
+        });
+    }
+    
+    eprintln!("成功提取 {} 个 topics", topics.len());
+    
+    // 更新任务，保存 topics
+    tokio::task::spawn_blocking({
+        let db_path = db_path.clone();
+        let task_id = task_id.clone();
+        let topics_clone = topics.clone();
+        move || -> Result<(), String> {
+            let conn = db::init_database(&db_path)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            
+            // 获取任务
+            let mut task = db::get_task(&conn, &task_id)
+                .map_err(|e| format!("无法获取任务: {}", e))?
+                .ok_or_else(|| "任务不存在".to_string())?;
+            
+            // 更新 topics
+            task.topics = Some(topics_clone);
+            
+            // 保存任务
+            db::update_task(&conn, &task)
+                .map_err(|e| format!("无法更新任务: {}", e))?;
+            
+            Ok(())
+        }
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
+    
+    eprintln!("Topics 已保存到任务");
     
     Ok(())
 }
@@ -4986,6 +5307,7 @@ pub fn run() {
         .manage(RunningStreams::new())
         .invoke_handler(tauri::generate_handler![
             compress_transcription_content_manual,
+            extract_topics_manual,
             create_transcription_resource,
             create_transcription_resource_from_url,
             create_transcription_task,

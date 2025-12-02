@@ -534,6 +534,7 @@ const ResourceDetailPage = () => {
         <div className="w-full lg:w-1/2 flex-shrink-0 lg:h-full overflow-auto border-r border-base-300 bg-base-100">
           <ResourceInfoCard
             resource={resource}
+            selectedTask={tasks.find(t => t.id === selectedTaskId) || null}
             audioSrc={audioSrc}
             videoSrc={videoSrc}
             subtitleUrl={subtitleUrl}
