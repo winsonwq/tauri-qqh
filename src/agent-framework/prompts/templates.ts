@@ -70,6 +70,14 @@ export const PLANNER_CORE_TEMPLATE = `
 
 **重要**：规划总结文本必须放在 \`<agent_meta>\` 标签之前，JSON 中不再需要 \`summary\` 字段
 
+**⚠️ 标签使用限制：**
+
+**允许使用的标签：**
+- \`<agent_meta>\`：唯一允许使用的标签，用于包裹 JSON 元数据
+
+**重要说明：**
+- **除了 \`<agent_meta>\` 标签外，不允许使用任何其他标签**
+
 ## 框架约束
 
 - 任务应该具体、可执行，避免过于抽象的描述
@@ -188,6 +196,15 @@ export const EXECUTOR_CORE_TEMPLATE = `
   - **\`isCurrent\`**：**可选**，标记当前正在处理的任务
 
 **重要**：任务执行总结文本必须放在 \`<agent_meta>\` 标签之前，JSON 中不再需要 \`summary\` 字段
+
+**⚠️ 标签使用限制：**
+
+**允许使用的标签：**
+- \`<agent_meta>\`：唯一允许使用的标签，用于包裹 JSON 元数据
+
+**重要说明：**
+- **除了 \`<agent_meta>\` 标签外，不允许使用任何其他标签**
+- 工具调用通过系统提供的工具调用接口进行，不需要在文本中标注
 
 **流程控制说明**：
 - 系统会优先使用你返回的 \`taskCompleted\`、\`shouldContinue\` 和 \`nextAction\` 字段来控制执行流程
@@ -311,6 +328,14 @@ export const VERIFIER_CORE_TEMPLATE = `
   - 供后续 Planner 参考制定新的任务计划
 
 **重要**：验证总结/最终回答文本必须放在 \`<agent_meta>\` 标签之前，JSON 中不再需要 \`summary\` 字段
+
+**⚠️ 标签使用限制：**
+
+**允许使用的标签：**
+- \`<agent_meta>\`：唯一允许使用的标签，用于包裹 JSON 元数据
+
+**重要说明：**
+- **除了 \`<agent_meta>\` 标签外，不允许使用任何其他标签**
 
 ## 完成标准
 
