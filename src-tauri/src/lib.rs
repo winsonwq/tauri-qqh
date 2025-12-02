@@ -1171,33 +1171,33 @@ async fn execute_transcription_task(
                         .map_err(|e| format!("数据库操作失败: {}", e))??;
                         
                         // 字幕下载完成后，自动压缩转写内容，然后提取 topics
-                        // 注意：task 和 resource 已经在上面的 await 中保存完成，这里可以安全地异步调用压缩
-                        let output_file_clone = output_file.clone();
-                        let task_id_clone = task_id.clone();
-                        let db_path_clone = db_path.clone();
-                        tokio::spawn(async move {
-                            // 添加一个小的延迟，确保数据库写入完全完成
-                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                            
-                            // 先压缩
-                            if let Err(e) = compress_transcription_after_completion(
-                                output_file_clone,
-                                task_id_clone.clone(),
-                                db_path_clone.clone(),
-                            ).await {
-                                eprintln!("压缩转写内容失败: {}", e);
-                                return;
-                            }
-                            
-                            // 压缩完成后，提取 topics
+                        // 注意：task 和 resource 已经在上面的 await 中保存完成，这里可以安全地调用压缩
+                        // 添加一个小的延迟，确保数据库写入完全完成
+                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                        
+                        // 先压缩（等待完成）
+                        if let Err(e) = compress_transcription_after_completion(
+                            output_file.clone(),
+                            task_id.clone(),
+                            db_path.clone(),
+                            Some(app.clone()),
+                        ).await {
+                            let _ = app.emit(&stderr_event_name, &format!("压缩转写内容失败: {}\n", e));
+                            eprintln!("压缩转写内容失败: {}", e);
+                        } else {
+                            // 压缩完成后，提取 topics（等待完成）
                             tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
                             if let Err(e) = extract_topics_after_compression(
-                                task_id_clone,
-                                db_path_clone,
+                                task_id.clone(),
+                                db_path.clone(),
+                                Some(app.clone()),
                             ).await {
+                                let _ = app.emit(&stderr_event_name, &format!("提取 topics 失败: {}\n", e));
                                 eprintln!("提取 topics 失败: {}", e);
+                            } else {
+                                let _ = app.emit(&stdout_event_name, "转写、压缩和 topics 提取全部完成！\n");
                             }
-                        });
+                        }
                         
                         return Ok("从URL成功获取字幕并转换为转写结果".to_string());
                     }
@@ -1545,33 +1545,37 @@ async fn execute_transcription_task(
     .map_err(|e| format!("数据库操作失败: {}", e))??;
     
     // 转写完成后，自动压缩转写内容，然后提取 topics
-    // 注意：task 和 resource 已经在上面的 await 中保存完成，这里可以安全地异步调用压缩
-    let output_file_clone = output_file.clone();
-    let task_id_clone = task_id.clone();
-    let db_path_clone = db_path.clone();
-    tokio::spawn(async move {
-        // 添加一个小的延迟，确保数据库写入完全完成
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        
-        // 先压缩
-        if let Err(e) = compress_transcription_after_completion(
-            output_file_clone,
-            task_id_clone.clone(),
-            db_path_clone.clone(),
-        ).await {
-            eprintln!("压缩转写内容失败: {}", e);
-            return;
-        }
-        
-        // 压缩完成后，提取 topics
+    // 注意：task 和 resource 已经在上面的 await 中保存完成，这里可以安全地调用压缩
+    // 创建事件名称用于发送实时日志
+    let stdout_event_name = format!("transcription-stdout-{}", task_id);
+    let stderr_event_name = format!("transcription-stderr-{}", task_id);
+    
+    // 添加一个小的延迟，确保数据库写入完全完成
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    
+    // 先压缩（等待完成）
+    if let Err(e) = compress_transcription_after_completion(
+        output_file.clone(),
+        task_id.clone(),
+        db_path.clone(),
+        Some(app.clone()),
+    ).await {
+        let _ = app.emit(&stderr_event_name, &format!("压缩转写内容失败: {}\n", e));
+        eprintln!("压缩转写内容失败: {}", e);
+    } else {
+        // 压缩完成后，提取 topics（等待完成）
         tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
         if let Err(e) = extract_topics_after_compression(
-            task_id_clone,
-            db_path_clone,
+            task_id.clone(),
+            db_path.clone(),
+            Some(app.clone()),
         ).await {
+            let _ = app.emit(&stderr_event_name, &format!("提取 topics 失败: {}\n", e));
             eprintln!("提取 topics 失败: {}", e);
+        } else {
+            let _ = app.emit(&stdout_event_name, "转写、压缩和 topics 提取全部完成！\n");
         }
-    });
+    }
     
     Ok(output_file.to_string_lossy().to_string())
 }
@@ -1619,9 +1623,33 @@ async fn compress_transcription_content_manual(
         result_file,
         task_id,
         db_path,
+        Some(app),
     ).await?;
     
     Ok("压缩完成".to_string())
+}
+
+// 检查任务是否被停止的辅助函数
+async fn check_task_stopped(
+    task_id: &str,
+    db_path: &PathBuf,
+) -> Result<bool, String> {
+    let task_status = tokio::task::spawn_blocking({
+        let db_path = db_path.clone();
+        let task_id = task_id.to_string();
+        move || -> Result<String, String> {
+            let conn = db::init_database(&db_path)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            let task = db::get_task(&conn, &task_id)
+                .map_err(|e| format!("无法获取任务: {}", e))?
+                .ok_or_else(|| "任务不存在".to_string())?;
+            Ok(task.status)
+        }
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
+    
+    Ok(task_status == "failed")
 }
 
 // 压缩转写内容（在转写完成后自动调用）
@@ -1629,7 +1657,32 @@ async fn compress_transcription_after_completion(
     result_file: PathBuf,
     task_id: String,
     db_path: PathBuf,
+    app: Option<tauri::AppHandle>,
 ) -> Result<(), String> {
+    // 创建事件名称用于发送实时日志
+    let stdout_event_name = format!("transcription-stdout-{}", task_id);
+    let stderr_event_name = format!("transcription-stderr-{}", task_id);
+    
+    // 发送日志的辅助函数
+    let emit_log = |msg: &str| {
+        if let Some(ref app) = app {
+            let _ = app.emit(&stdout_event_name, msg);
+        }
+        eprintln!("{}", msg.trim());
+    };
+    
+    let emit_error = |msg: &str| {
+        if let Some(ref app) = app {
+            let _ = app.emit(&stderr_event_name, msg);
+        }
+        eprintln!("{}", msg.trim());
+    };
+    
+    // 检查任务是否被停止
+    if check_task_stopped(&task_id, &db_path).await? {
+        emit_error("任务已被停止，取消压缩操作\n");
+        return Err("任务已被停止".to_string());
+    }
     // 读取转写结果文件
     let content = tokio::fs::read_to_string(&result_file)
         .await
@@ -1645,8 +1698,11 @@ async fn compress_transcription_after_completion(
         .ok_or_else(|| "无法找到 transcription 数组".to_string())?;
     
     if segments.is_empty() {
+        emit_log("转写内容为空，跳过压缩\n");
         return Ok(()); // 空内容，不需要压缩
     }
+    
+    emit_log("开始压缩转写内容...\n");
     
     // 计算总时长
     let first_seg = &segments[0];
@@ -1691,14 +1747,12 @@ async fn compress_transcription_after_completion(
             full_text
         );
         
-        // 打印压缩结果到控制台
-        eprintln!("========== 压缩结果（短内容，未压缩）==========");
-        eprintln!("任务ID: {}", task_id);
-        eprintln!("内容类型: 短内容（< {} 字符）", COMPRESSION_SHORT_CONTENT_THRESHOLD);
-        eprintln!("原始片段数: {}", segments.len());
-        eprintln!("原始时长: {:.1} 秒", duration);
-        eprintln!("内容长度: {} 字符（小于{}，未压缩）", full_text.len(), COMPRESSION_SHORT_CONTENT_THRESHOLD);
-        eprintln!("==============================");
+        // 发送压缩结果日志
+        emit_log(&format!("压缩完成（短内容，未压缩）\n"));
+        emit_log(&format!("内容类型: 短内容（< {} 字符）\n", COMPRESSION_SHORT_CONTENT_THRESHOLD));
+        emit_log(&format!("原始片段数: {}\n", segments.len()));
+        emit_log(&format!("原始时长: {:.1} 秒\n", duration));
+        emit_log(&format!("内容长度: {} 字符（小于{}，未压缩）\n", full_text.len(), COMPRESSION_SHORT_CONTENT_THRESHOLD));
         
         // 更新数据库
         // 注意：这里需要确保获取到最新的 task 数据，然后只更新 compressed_content 字段
@@ -1757,8 +1811,18 @@ async fn compress_transcription_after_completion(
     .map_err(|e| format!("数据库操作失败: {}", e))??;
     
     let compression_config = compression_config.ok_or_else(|| {
-        "未设置压缩模型配置，请在设置中选择一个 AI 配置作为压缩模型".to_string()
+        let msg = "未设置压缩模型配置，请在设置中选择一个 AI 配置作为压缩模型".to_string();
+        emit_error(&format!("{}\n", msg));
+        msg
     })?;
+    
+    emit_log(&format!("使用压缩模型: {}\n", compression_config.model));
+    
+    // 再次检查任务是否被停止
+    if check_task_stopped(&task_id, &db_path).await? {
+        emit_error("任务已被停止，取消压缩操作\n");
+        return Err("任务已被停止".to_string());
+    }
     
     let compression_model = compression_config.model;
     let base_url = compression_config.base_url;
@@ -1827,6 +1891,14 @@ async fn compress_transcription_after_completion(
     let client = reqwest::Client::new();
     
     // 发送请求
+    emit_log("正在调用 AI 模型进行压缩...\n");
+    
+    // 在发送请求前再次检查任务状态
+    if check_task_stopped(&task_id, &db_path).await? {
+        emit_error("任务已被停止，取消压缩操作\n");
+        return Err("任务已被停止".to_string());
+    }
+    
     let response = client
         .post(&url)
         .header("Authorization", format!("Bearer {}", api_key))
@@ -1834,15 +1906,22 @@ async fn compress_transcription_after_completion(
         .json(&request)
         .send()
         .await
-        .map_err(|e| format!("发送压缩请求失败: {}", e))?;
+        .map_err(|e| {
+            let msg = format!("发送压缩请求失败: {}", e);
+            emit_error(&format!("{}\n", msg));
+            msg
+        })?;
     
     // 检查响应状态
     if !response.status().is_success() {
         let status = response.status();
         let error_text = response.text().await.unwrap_or_default();
-        eprintln!("压缩失败: {} - {}", status, error_text);
-        return Err(format!("压缩失败: {} - {}", status, error_text));
+        let msg = format!("压缩失败: {} - {}", status, error_text);
+        emit_error(&format!("{}\n", msg));
+        return Err(msg);
     }
+    
+    emit_log("AI 模型响应成功，正在解析结果...\n");
     
     // 解析响应
     let completion_response: ai::ChatCompletionResponse = response
@@ -1866,29 +1945,26 @@ async fn compress_transcription_after_completion(
         compressed
     );
     
-    // 打印压缩结果到控制台
-    eprintln!("========== 压缩结果 ==========");
-    eprintln!("任务ID: {}", task_id);
-    eprintln!("内容类型: {}", content_type);
-    eprintln!("原始片段数: {}", segments.len());
-    eprintln!("原始时长: {:.1} 秒", duration);
-    eprintln!("原始内容长度: {} 字符", full_text_len);
+    // 发送压缩结果日志
+    emit_log("压缩完成！\n");
+    emit_log(&format!("内容类型: {}\n", content_type));
+    emit_log(&format!("原始片段数: {}\n", segments.len()));
+    emit_log(&format!("原始时长: {:.1} 秒\n", duration));
+    emit_log(&format!("原始内容长度: {} 字符\n", full_text_len));
     if full_text_len > COMPRESSION_LONG_CONTENT_THRESHOLD {
-        eprintln!("发送给AI的内容长度: {} 字符（已截断：前{} + 后{}）", 
+        emit_log(&format!("发送给AI的内容长度: {} 字符（已截断：前{} + 后{}）\n", 
             input_text.len(), 
             COMPRESSION_TRUNCATE_HEAD_LENGTH, 
             COMPRESSION_TRUNCATE_TAIL_LENGTH
-        );
+        ));
     }
-    eprintln!("压缩后内容长度: {} 字符", final_compressed.len());
-    eprintln!("压缩结果预览（前500字符）:");
-    let preview = if final_compressed.len() > 500 {
-        format!("{}...", &final_compressed[..500])
-    } else {
-        final_compressed.clone()
-    };
-    eprintln!("{}", preview);
-    eprintln!("==============================");
+    emit_log(&format!("压缩后内容长度: {} 字符\n", final_compressed.len()));
+    
+    // 在保存前再次检查任务状态
+    if check_task_stopped(&task_id, &db_path).await? {
+        emit_error("任务已被停止，取消保存压缩结果\n");
+        return Err("任务已被停止".to_string());
+    }
     
     // 更新数据库
     // 注意：这里需要确保获取到最新的 task 数据，然后只更新 compressed_content 字段
@@ -2021,7 +2097,7 @@ async fn extract_topics_manual(
     };
     
     // 调用提取函数并等待完成
-    extract_topics_internal(task_id, content_to_extract, db_path).await?;
+    extract_topics_internal(task_id, content_to_extract, db_path, Some(app)).await?;
     
     Ok("Topics 提取完成".to_string())
 }
@@ -2030,8 +2106,34 @@ async fn extract_topics_manual(
 async fn extract_topics_after_compression(
     task_id: String,
     db_path: PathBuf,
+    app: Option<tauri::AppHandle>,
 ) -> Result<(), String> {
-    eprintln!("开始提取 topics，任务ID: {}", task_id);
+    // 创建事件名称用于发送实时日志
+    let stdout_event_name = format!("transcription-stdout-{}", task_id);
+    let stderr_event_name = format!("transcription-stderr-{}", task_id);
+    
+    // 发送日志的辅助函数
+    let emit_log = |msg: &str| {
+        if let Some(ref app) = app {
+            let _ = app.emit(&stdout_event_name, msg);
+        }
+        eprintln!("{}", msg.trim());
+    };
+    
+    let emit_error = |msg: &str| {
+        if let Some(ref app) = app {
+            let _ = app.emit(&stderr_event_name, msg);
+        }
+        eprintln!("{}", msg.trim());
+    };
+    
+    emit_log("开始提取 topics...\n");
+    
+    // 检查任务是否被停止
+    if check_task_stopped(&task_id, &db_path).await? {
+        emit_error("任务已被停止，取消提取 topics 操作\n");
+        return Err("任务已被停止".to_string());
+    }
     
     // 获取任务信息
     let compressed_content = tokio::task::spawn_blocking({
@@ -2059,7 +2161,7 @@ async fn extract_topics_after_compression(
     .await
     .map_err(|e| format!("数据库操作失败: {}", e))??;
     
-    extract_topics_internal(task_id, compressed_content, db_path).await
+    extract_topics_internal(task_id, compressed_content, db_path, app).await
 }
 
 // 提取 topics 的内部实现
@@ -2067,7 +2169,26 @@ async fn extract_topics_internal(
     task_id: String,
     compressed_content: String,
     db_path: PathBuf,
+    app: Option<tauri::AppHandle>,
 ) -> Result<(), String> {
+    // 创建事件名称用于发送实时日志
+    let stdout_event_name = format!("transcription-stdout-{}", task_id);
+    let stderr_event_name = format!("transcription-stderr-{}", task_id);
+    
+    // 发送日志的辅助函数
+    let emit_log = |msg: &str| {
+        if let Some(ref app) = app {
+            let _ = app.emit(&stdout_event_name, msg);
+        }
+        eprintln!("{}", msg.trim());
+    };
+    
+    let emit_error = |msg: &str| {
+        if let Some(ref app) = app {
+            let _ = app.emit(&stderr_event_name, msg);
+        }
+        eprintln!("{}", msg.trim());
+    };
     // 获取压缩配置（使用相同的 AI 配置）
     let compression_config = tokio::task::spawn_blocking({
         let db_path = db_path.clone();
@@ -2082,12 +2203,22 @@ async fn extract_topics_internal(
     .map_err(|e| format!("数据库操作失败: {}", e))??;
     
     let compression_config = compression_config.ok_or_else(|| {
-        "未设置压缩模型配置，无法提取 topics".to_string()
+        let msg = "未设置压缩模型配置，无法提取 topics".to_string();
+        emit_error(&format!("{}\n", msg));
+        msg
     })?;
     
     let compression_model = compression_config.model;
     let base_url = compression_config.base_url;
     let api_key = compression_config.api_key;
+    
+    emit_log(&format!("使用模型: {} 提取 topics\n", compression_model));
+    
+    // 再次检查任务是否被停止
+    if check_task_stopped(&task_id, &db_path).await? {
+        emit_error("任务已被停止，取消提取 topics 操作\n");
+        return Err("任务已被停止".to_string());
+    }
     
     // 构建提取 topics 的提示词
     let system_message = ai::ChatMessage {
@@ -2130,6 +2261,14 @@ async fn extract_topics_internal(
     let client = reqwest::Client::new();
     
     // 发送请求
+    emit_log("正在调用 AI 模型提取 topics...\n");
+    
+    // 在发送请求前再次检查任务状态
+    if check_task_stopped(&task_id, &db_path).await? {
+        emit_error("任务已被停止，取消提取 topics 操作\n");
+        return Err("任务已被停止".to_string());
+    }
+    
     let response = client
         .post(&url)
         .header("Authorization", format!("Bearer {}", api_key))
@@ -2137,15 +2276,22 @@ async fn extract_topics_internal(
         .json(&request)
         .send()
         .await
-        .map_err(|e| format!("发送 topics 提取请求失败: {}", e))?;
+        .map_err(|e| {
+            let msg = format!("发送 topics 提取请求失败: {}", e);
+            emit_error(&format!("{}\n", msg));
+            msg
+        })?;
     
     // 检查响应状态
     if !response.status().is_success() {
         let status = response.status();
         let error_text = response.text().await.unwrap_or_default();
-        eprintln!("提取 topics 失败: {} - {}", status, error_text);
-        return Err(format!("提取 topics 失败: {} - {}", status, error_text));
+        let msg = format!("提取 topics 失败: {} - {}", status, error_text);
+        emit_error(&format!("{}\n", msg));
+        return Err(msg);
     }
+    
+    emit_log("AI 模型响应成功，正在解析 topics...\n");
     
     // 解析响应
     let completion_response: ai::ChatCompletionResponse = response
@@ -2238,7 +2384,13 @@ async fn extract_topics_internal(
         });
     }
     
-    eprintln!("成功提取 {} 个 topics", topics.len());
+    emit_log(&format!("成功提取 {} 个 topics\n", topics.len()));
+    
+    // 在保存前再次检查任务状态
+    if check_task_stopped(&task_id, &db_path).await? {
+        emit_error("任务已被停止，取消保存 topics\n");
+        return Err("任务已被停止".to_string());
+    }
     
     // 更新任务，保存 topics
     tokio::task::spawn_blocking({
@@ -2298,9 +2450,23 @@ async fn stop_transcription_task(
     .await
     .map_err(|e| format!("数据库操作失败: {}", e))??;
     
-    // 如果任务状态不是 RUNNING，不允许停止
-    if task.status != "running" {
+    // 如果任务状态不是 RUNNING 或 COMPLETED（可能正在进行压缩/提取 topics），不允许停止
+    // 注意：COMPLETED 状态的任务可能正在进行压缩或提取 topics，也应该允许停止
+    if task.status != "running" && task.status != "completed" {
         return Err(format!("任务 {} 不在运行中（当前状态: {}）", task_id, task.status));
+    }
+    
+    // 如果任务已完成但可能正在进行压缩/提取 topics，需要检查是否有压缩内容或 topics
+    // 如果没有，说明可能正在进行这些操作，允许停止
+    let is_processing = if task.status == "completed" {
+        // 检查是否正在进行压缩或提取 topics（已完成但没有压缩内容，或没有 topics）
+        task.compressed_content.is_none() || task.topics.is_none()
+    } else {
+        true // running 状态肯定在处理中
+    };
+    
+    if !is_processing && task.status == "completed" {
+        return Err(format!("任务 {} 已完成所有处理，无需停止", task_id));
     }
     
     // 检查任务是否在 running_tasks 中（实际有进程在运行）

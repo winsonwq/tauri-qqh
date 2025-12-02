@@ -70,6 +70,40 @@ const TranscriptionHistory = ({
     if (!selectedTaskId || currentTaskLogs.length === 0) return '';
     return currentTaskLogs.filter(log => log.trim()).join('\n');
   }, [selectedTaskId, currentTaskLogs]);
+  
+  // 监听日志，检测到完成消息后刷新任务列表
+  const completionDetectedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!selectedTaskId || !realtimeLog) return;
+    
+    // 当 selectedTaskId 变化时，重置检测标志
+    if (completionDetectedRef.current !== selectedTaskId) {
+      completionDetectedRef.current = selectedTaskId;
+    }
+    
+    // 检测是否包含完成消息
+    if (realtimeLog.includes('转写、压缩和 topics 提取全部完成！') && 
+        completionDetectedRef.current === selectedTaskId) {
+      // 标记为已处理，避免重复触发
+      completionDetectedRef.current = null;
+      
+      // 延迟一下，确保数据库已经更新
+      const timer = setTimeout(async () => {
+        if (onTaskUpdated && selectedTaskId) {
+          try {
+            const updatedTask = await invoke<TranscriptionTask>('get_transcription_task', {
+              taskId: selectedTaskId,
+            });
+            onTaskUpdated(selectedTaskId, updatedTask);
+          } catch (err) {
+            console.error('获取更新后的任务失败:', err);
+          }
+        }
+      }, 500);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [realtimeLog, selectedTaskId, onTaskUpdated]);
 
   // 使用 useMemo 缓存 selectedTask，避免每次渲染都重新查找
   const selectedTask = useMemo(() => {
@@ -330,14 +364,28 @@ const TranscriptionHistory = ({
       <div className="flex-shrink-0">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold">转写记录</h2>
-          <button
-            className="btn btn-primary btn-sm"
-            onClick={onCreateTask}
-            disabled={!canCreateTask}
-            title={!canCreateTask ? '视频资源正在提取音频，请稍候...' : undefined}
-          >
-            创建转写任务
-          </button>
+          {/* 停止按钮和创建转写任务按钮互斥显示 */}
+          {(selectedTask && (selectedTask.status === TranscriptionTaskStatus.RUNNING || 
+            (selectedTask.status === TranscriptionTaskStatus.COMPLETED && 
+             (!selectedTask.compressed_content || !selectedTask.topics)))) ? (
+            <button
+              className="btn btn-warning btn-sm"
+              onClick={handleStopTask}
+              title="停止任务"
+            >
+              <HiStop className="w-4 h-4 mr-1" />
+              停止
+            </button>
+          ) : (
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={onCreateTask}
+              disabled={!canCreateTask}
+              title={!canCreateTask ? '视频资源正在提取音频，请稍候...' : undefined}
+            >
+              创建转写任务
+            </button>
+          )}
         </div>
 
         {tasks.length === 0 ? (
@@ -528,19 +576,8 @@ const TranscriptionHistory = ({
       {/* 下部分：转写结果/日志展示 */}
       {selectedTask && (
         <div className="flex-1 flex flex-col min-h-0 border-base-300">
-          {/* 标题和停止按钮 */}
+          {/* 标题区域（停止按钮已移到上方） */}
           <div className="flex items-center gap-2 mb-3 flex-shrink-0">
-            {/* 如果任务正在运行，在标题旁边显示停止按钮 */}
-            {selectedTask.status === TranscriptionTaskStatus.RUNNING && (
-              <button
-                className="btn btn-warning btn-sm"
-                onClick={handleStopTask}
-                title="停止任务"
-              >
-                <HiStop className="w-4 h-4 mr-1" />
-                停止
-              </button>
-            )}
           </div>
 
           {/* 内容区域 */}

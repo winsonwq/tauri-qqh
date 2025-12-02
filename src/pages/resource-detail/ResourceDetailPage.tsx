@@ -381,8 +381,42 @@ const ResourceDetailPage = () => {
 
   const handleTaskStopped = useCallback(async () => {
     await loadTasks(false);
-    setSelectedTaskId(null);
-  }, [loadTasks, setSelectedTaskId]);
+    
+    // 重新获取最新的任务列表，确保获取到更新后的状态
+    if (!resourceId) return;
+    
+    try {
+      const latestTasks = await invoke<TranscriptionTask[]>(
+        'get_transcription_tasks',
+        { resourceId }
+      );
+      
+      // 选择最近一次成功的记录
+      const completedTasks = latestTasks
+        .filter((t) => t.status === TranscriptionTaskStatus.COMPLETED && t.result)
+        .sort((a, b) => {
+          // 按完成时间降序排序，如果没有完成时间则按创建时间
+          const aTime = a.completed_at || a.created_at;
+          const bTime = b.completed_at || b.created_at;
+          return bTime.localeCompare(aTime);
+        });
+      
+      if (completedTasks.length > 0) {
+        setSelectedTaskId(completedTasks[0].id);
+      } else {
+        // 如果没有成功的记录，选择第一个任务
+        if (latestTasks.length > 0) {
+          setSelectedTaskId(latestTasks[0].id);
+        } else {
+          setSelectedTaskId(null);
+        }
+      }
+    } catch (err) {
+      console.error('获取任务列表失败:', err);
+      // 如果获取失败，至少刷新任务列表
+      setSelectedTaskId(null);
+    }
+  }, [loadTasks, setSelectedTaskId, resourceId]);
 
   // 稳定 onTaskDeleted 回调，避免 loadTasks 引用变化导致重新渲染
   const handleTaskDeleted = useCallback(async () => {

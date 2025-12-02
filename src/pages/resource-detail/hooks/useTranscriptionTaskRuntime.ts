@@ -288,19 +288,27 @@ const useTranscriptionTaskRuntime = ({
 
       const taskIdChanged = previousSelectedTaskIdRef.current !== selectedTaskId
       const statusChanged = previousSelectedTaskStatusRef.current !== selectedTaskStatus
+      
+      // 获取当前选中的任务
+      const selectedTask = tasks.find(t => t.id === selectedTaskId)
 
       // 如果任务 ID 或状态发生变化，或者需要检查监听器状态，才需要处理
+      const needsLogListening = selectedTaskStatus === TranscriptionTaskStatus.RUNNING ||
+        (selectedTaskStatus === TranscriptionTaskStatus.COMPLETED && 
+         selectedTask && (!selectedTask.compressed_content || !selectedTask.topics));
+      
       const needsProcessing = taskIdChanged || statusChanged || 
-        (selectedTaskStatus === TranscriptionTaskStatus.RUNNING && 
+        (needsLogListening && 
          (!unlistenRef.current.taskId || unlistenRef.current.taskId !== selectedTaskId))
 
       if (needsProcessing) {
         console.log('[loadResult] 任务变化，taskId:', selectedTaskId, 'status:', selectedTaskStatus, 'taskIdChanged:', taskIdChanged, 'statusChanged:', statusChanged, 'needsProcessing:', needsProcessing)
 
-        if (selectedTaskStatus === TranscriptionTaskStatus.RUNNING) {
+        // 如果任务正在运行，或者在已完成状态但可能正在进行压缩/提取 topics，需要监听日志
+        if (needsLogListening) {
           if (isCancelled) return
           // 只有当没有监听器，或者当前监听器不是这个任务的，才设置新的监听器
-          console.log('[loadResult] 任务运行中，当前监听器 taskId:', unlistenRef.current.taskId, '选中任务 id:', selectedTaskId)
+          console.log('[loadResult] 任务需要监听日志，当前监听器 taskId:', unlistenRef.current.taskId, '选中任务 id:', selectedTaskId)
           if (
             !unlistenRef.current.taskId ||
             unlistenRef.current.taskId !== selectedTaskId
@@ -311,10 +319,15 @@ const useTranscriptionTaskRuntime = ({
             console.log('[loadResult] 监听器已存在，跳过设置')
           }
         } else {
-          // 如果任务不是运行状态，确保清理监听器
-          // 但只有当之前是运行状态时才清理，避免重复清理
-          if (previousSelectedTaskStatusRef.current === TranscriptionTaskStatus.RUNNING) {
-            console.log('[loadResult] 任务不是运行状态，清理监听器')
+          // 如果任务不需要监听日志，确保清理监听器
+          // 但只有当之前需要监听时才清理，避免重复清理
+          const previousSelectedTask = tasks.find(t => t.id === previousSelectedTaskIdRef.current)
+          const previousNeedsLogListening = previousSelectedTaskStatusRef.current === TranscriptionTaskStatus.RUNNING ||
+            (previousSelectedTaskStatusRef.current === TranscriptionTaskStatus.COMPLETED && 
+             previousSelectedTask && (!previousSelectedTask.compressed_content || !previousSelectedTask.topics));
+          
+          if (previousNeedsLogListening) {
+            console.log('[loadResult] 任务不需要监听日志，清理监听器')
             cleanupTaskListeners()
           }
         }
