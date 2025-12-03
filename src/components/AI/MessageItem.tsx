@@ -141,7 +141,6 @@ const renderMessageContent = (
   action?: string,
 ) => {
   // 检查是否有 <agent_meta> 标签或 JSON 结构
-  const hasDataTag = content.includes('<agent_meta>')
   const hasJsonStructure = content.trim().match(/\{[\s\S]*\}/) !== null
 
   // 确定要使用的组件

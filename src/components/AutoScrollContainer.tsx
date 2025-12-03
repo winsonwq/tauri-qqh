@@ -92,15 +92,72 @@ const AutoScrollContainer = forwardRef<HTMLDivElement, AutoScrollContainerProps>
     }
   }, [ref])
 
+  // 当 shouldAutoScroll 从 false 变为 true 时，重新启用自动滚动
+  const prevShouldAutoScrollRef = useRef(shouldAutoScroll)
+  useEffect(() => {
+    // 如果 shouldAutoScroll 从 false 变为 true（AI 开始回答），重新启用自动滚动
+    if (shouldAutoScroll && !prevShouldAutoScrollRef.current && !isAutoScrollEnabled) {
+      setIsAutoScrollEnabled(true)
+    }
+    prevShouldAutoScrollRef.current = shouldAutoScroll
+  }, [shouldAutoScroll, isAutoScrollEnabled])
+
   // 当 shouldAutoScroll 为 true 时，自动滚动到底部（仅在自动滚动已启用时）
   useEffect(() => {
     if (shouldAutoScroll && isAutoScrollEnabled) {
-      // 只有在自动滚动已启用时才自动滚动
+      // 使用双重 requestAnimationFrame 确保 DOM 已更新
       requestAnimationFrame(() => {
-        scrollToBottom('smooth')
+        requestAnimationFrame(() => {
+          scrollToBottom('smooth')
+        })
       })
     }
   }, [shouldAutoScroll, isAutoScrollEnabled, scrollToBottom, children])
+
+  // 使用 ref 存储最新的 shouldAutoScroll 和 isAutoScrollEnabled 值
+  const shouldAutoScrollRef = useRef(shouldAutoScroll)
+  const isAutoScrollEnabledRef = useRef(isAutoScrollEnabled)
+  useEffect(() => {
+    shouldAutoScrollRef.current = shouldAutoScroll
+    isAutoScrollEnabledRef.current = isAutoScrollEnabled
+  }, [shouldAutoScroll, isAutoScrollEnabled])
+
+  // 使用 MutationObserver 监听内容变化，在流式输出时及时滚动
+  const mutationObserverTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  useEffect(() => {
+    if (!shouldAutoScroll || !isAutoScrollEnabled) return
+
+    const container = containerRef.current
+    if (!container) return
+
+    const observer = new MutationObserver(() => {
+      // 使用防抖，避免过度滚动
+      if (mutationObserverTimeoutRef.current) {
+        clearTimeout(mutationObserverTimeoutRef.current)
+      }
+      mutationObserverTimeoutRef.current = setTimeout(() => {
+        // 使用 ref 获取最新值，确保使用最新的状态
+        if (shouldAutoScrollRef.current && isAutoScrollEnabledRef.current) {
+          requestAnimationFrame(() => {
+            scrollToBottom('smooth')
+          })
+        }
+      }, 50) // 50ms 防抖
+    })
+
+    observer.observe(container, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    })
+
+    return () => {
+      observer.disconnect()
+      if (mutationObserverTimeoutRef.current) {
+        clearTimeout(mutationObserverTimeoutRef.current)
+      }
+    }
+  }, [shouldAutoScroll, isAutoScrollEnabled, scrollToBottom])
 
   // 监听滚动事件和用户交互事件
   useEffect(() => {
