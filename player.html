@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Player</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #000;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        }
+        #player {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        iframe {
+            width: 100vw;
+            height: 100vh;
+            border: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="player"></div>
+    <script>
+        // 从 URL 参数中获取视频 ID 和时间
+        const urlParams = new URLSearchParams(window.location.search);
+        const videoId = urlParams.get('v');
+        
+        // 支持两种时间参数：t（秒）和 start（秒）
+        let startTime = null;
+        const timeParam = urlParams.get('t') || urlParams.get('start');
+        if (timeParam) {
+            // 如果时间参数包含 's' 后缀，去掉它
+            const timeValue = timeParam.toString().replace(/s$/, '');
+            const parsedTime = parseInt(timeValue, 10);
+            if (!isNaN(parsedTime) && parsedTime >= 0) {
+                startTime = parsedTime;
+            }
+        }
+        
+        // 检查是否自动播放（默认为 true）
+        const autoplay = urlParams.get('autoplay') !== '0' && urlParams.get('autoplay') !== 'false';
+        
+        // 检查是否静音（默认根据 autoplay 决定）
+        const mute = urlParams.get('mute') === '1' || urlParams.get('mute') === 'true' || 
+                    (autoplay && urlParams.get('mute') !== '0' && urlParams.get('mute') !== 'false');
+        
+        if (videoId) {
+            const iframe = document.createElement('iframe');
+            
+            // 构建 YouTube 嵌入 URL
+            const params = new URLSearchParams();
+            params.set('enablejsapi', '1');
+            
+            // 设置 origin 参数，使用当前页面的 origin
+            // 部署到 CDN 后，window.location.origin 会是 HTTPS 域名，YouTube 可以正确识别
+            const origin = window.location.origin;
+            if (origin && (origin.startsWith('http://') || origin.startsWith('https://'))) {
+                params.set('origin', origin);
+            }
+            
+            // 添加时间参数
+            if (startTime !== null) {
+                params.set('start', startTime.toString());
+            }
+            
+            // 添加自动播放参数
+            if (autoplay) {
+                params.set('autoplay', '1');
+            }
+            
+            // 添加静音参数（大多数浏览器要求静音才能自动播放）
+            if (mute) {
+                params.set('mute', '1');
+            }
+            
+            // 其他有用的参数
+            params.set('rel', '0'); // 不显示相关视频
+            params.set('modestbranding', '1'); // 减少 YouTube 品牌标识
+            
+            // 使用 youtube-nocookie 域名通常有更好的兼容性，特别是在 Tauri 环境中
+            iframe.src = `https://www.youtube-nocookie.com/embed/${videoId}?${params.toString()}`;
+            
+            // 设置 iframe 属性
+            iframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
+            iframe.allowFullscreen = true;
+            iframe.frameBorder = "0";
+            iframe.title = "YouTube 视频播放器";
+            
+            // 设置 referrerpolicy 以确保正确的 Referer 头
+            iframe.referrerPolicy = "origin-when-cross-origin";
+            
+            // 添加到页面
+            document.getElementById('player').appendChild(iframe);
+            
+            // 监听 iframe 加载事件
+            iframe.onload = function() {
+                console.log('YouTube 播放器加载成功');
+            };
+            
+            iframe.onerror = function(error) {
+                console.error('YouTube 播放器加载失败:', error);
+            };
+        } else {
+            console.error('缺少视频 ID 参数，请在 URL 中添加 ?v=VIDEO_ID 参数');
+        }
+    </script>
+</body>
+</html>
+
