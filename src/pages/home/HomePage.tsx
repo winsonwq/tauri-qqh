@@ -22,25 +22,25 @@ const HomePage = () => {
   const [urlLoading, setUrlLoading] = useState(false);
   const message = useMessage();
   
-  // 瀑布流布局相关 - 响应式，至少3列
+  // 瀑布流布局相关 - 响应式，至少4列
   const masonryRef = useRef<HTMLDivElement>(null);
-  const [columnCount, setColumnCount] = useState(3);
+  const [columnCount, setColumnCount] = useState(4);
   const [columns, setColumns] = useState<TranscriptionResource[][]>([]);
   
-  // 计算列数（至少3列）
+  // 计算列数（至少4列）
   const calculateColumnCount = () => {
-    if (!masonryRef.current) return 3;
+    if (!masonryRef.current) return 4;
     const width = masonryRef.current.offsetWidth;
-    // 根据宽度计算列数，但至少3列
-    // 假设每列最小宽度约为 280px（包括 gap）
-    const minColumnWidth = 280;
+    // 根据宽度计算列数，但至少4列
+    // 假设每列最小宽度约为 240px（包括 gap）
+    const minColumnWidth = 240;
     const gap = 16; // gap-4 = 1rem = 16px
     // 计算能容纳多少列：总宽度 = 列数 * 列宽 + (列数 - 1) * gap
     // 即：width >= cols * minColumnWidth + (cols - 1) * gap
     // 解得：cols <= (width + gap) / (minColumnWidth + gap)
     const calculatedCols = Math.floor((width + gap) / (minColumnWidth + gap));
-    // 至少3列，但不超过计算出的列数
-    return Math.max(3, Math.min(calculatedCols, 6)); // 最多6列，避免过多
+    // 至少4列，但不超过计算出的列数
+    return Math.max(4, Math.min(calculatedCols, 6)); // 最多6列，避免过多
   };
   
   // 将资源分配到各列（瀑布流算法）

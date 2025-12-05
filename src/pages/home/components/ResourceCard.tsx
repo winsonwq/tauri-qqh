@@ -45,10 +45,10 @@ const ResourceCard = ({ resource, onClick, onDelete }: ResourceCardProps) => {
         </div>
       )}
       
-      <div className="card-body flex flex-col">
-        <div className="flex items-start justify-between mb-4">
+      <div className="card-body flex flex-col p-3">
+        <div className="flex items-start justify-between mb-2">
           <h3
-            className="card-title text-base flex-1 min-w-0"
+            className="card-title text-sm flex-1 min-w-0 line-clamp-3"
             title={resource.name}
           >
             <ResourceNameWithIcon
