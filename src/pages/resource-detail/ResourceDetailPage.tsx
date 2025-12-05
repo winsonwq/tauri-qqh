@@ -7,7 +7,6 @@ import { setCurrentPage } from '../../redux/slices/featureKeysSlice';
 import { setExtracting } from '../../redux/slices/videoExtractionSlice';
 import { setContext, clearContext } from '../../redux/slices/aiContextSlice';
 import { useMessage } from '../../components/Toast';
-import { EditableInput } from '../../components/EditableInput';
 import {
   TranscriptionTask,
   TranscriptionTaskStatus,
@@ -545,13 +544,9 @@ const ResourceDetailPage = () => {
             <HiArrowLeft className="w-5 h-5" />
           </button>
           <div className="flex-1 min-w-0">
-            <EditableInput
-              value={resource.name}
-              onSave={handleUpdateResourceName}
-              displayClassName="text-lg font-semibold truncate"
-              tooltip="点击编辑标题"
-              className="w-full"
-            />
+            <span className="text-lg font-semibold truncate block">
+              {resource.name}
+            </span>
           </div>
           <button
             className="btn btn-sm btn-error btn-ghost"
