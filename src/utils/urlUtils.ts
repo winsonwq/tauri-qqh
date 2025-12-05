@@ -1,6 +1,15 @@
 import { Platform } from '../models/TranscriptionResource';
 
 /**
+ * YouTube 播放器页面 URL
+ * 用于作为中间层来避免 YouTube embed 限制
+ * 
+ * 注意：CSP 配置已设置为允许所有 HTTPS 连接（使用 https: 通配符）
+ * 因此任何 HTTPS 的 CDN 地址都可以正常访问，无需额外配置
+ */
+export const YOUTUBE_PLAYER_URL = 'https://assets.metaplus.zone/uPic/player.html';
+
+/**
  * 检测URL平台类型
  * @param url URL字符串
  * @returns 平台类型，如果不是URL则返回null
@@ -89,23 +98,13 @@ export function convertToEmbedUrl(url: string, startTime?: number, autoplay: boo
   
   if (platform === Platform.YOUTUBE) {
     // YouTube URL 转换
-    // 支持格式：
-    // - https://www.youtube.com/watch?v=VIDEO_ID
-    // - https://youtu.be/VIDEO_ID
-    // - https://www.youtube.com/watch?v=VIDEO_ID&t=123s
-    // - https://www.youtube.com/embed/VIDEO_ID (已经是嵌入格式)
+    // 使用 CDN 上的 player.html 作为中间层来避免 YouTube embed 限制
     let videoId: string | null = null;
-    let timeParam = '';
     
     // 如果已经是嵌入格式，提取 videoId
     const embedMatch = url.match(/youtube\.com\/embed\/([^/?&]+)/);
     if (embedMatch && embedMatch[1]) {
       videoId = embedMatch[1];
-      // 从现有 URL 中提取时间参数
-      const existingTimeMatch = url.match(/[?&]start=(\d+)/);
-      if (existingTimeMatch) {
-        timeParam = `?start=${existingTimeMatch[1]}`;
-      }
     }
     
     // 匹配 youtube.com/watch?v=VIDEO_ID
@@ -125,22 +124,23 @@ export function convertToEmbedUrl(url: string, startTime?: number, autoplay: boo
     }
     
     if (videoId) {
-      // 构建查询参数
+      // 构建查询参数，传递给 CDN 上的 player.html
       const params = new URLSearchParams();
+      
+      // 视频 ID 参数（必需）
+      params.set('v', videoId);
       
       // 优先使用传入的 startTime，否则从 URL 中提取
       if (startTime !== undefined) {
         params.set('start', Math.floor(startTime).toString());
-      } else if (timeParam) {
-        // 从现有 timeParam 中提取 start 值
-        const existingStartMatch = timeParam.match(/[?&]start=(\d+)/);
-        if (existingStartMatch) {
-          params.set('start', existingStartMatch[1]);
-        }
       } else {
         // 从原始 URL 中提取时间参数
+        // 支持 start= 和 t= 两种格式
+        const startMatch = url.match(/[?&]start=(\d+)/);
         const timeMatch = url.match(/[?&]t=(\d+)s?/);
-        if (timeMatch) {
+        if (startMatch) {
+          params.set('start', startMatch[1]);
+        } else if (timeMatch) {
           params.set('start', timeMatch[1]);
         }
       }
@@ -148,23 +148,27 @@ export function convertToEmbedUrl(url: string, startTime?: number, autoplay: boo
       // 如果设置了自动播放，添加 autoplay 参数
       if (autoplay) {
         params.set('autoplay', '1');
+      } else {
+        // player.html 默认 autoplay 为 true，如果需要关闭，需要显式设置
+        params.set('autoplay', '0');
       }
       
-      // 如果设置了静音，添加 mute 参数
+      // 处理静音参数
       // 注意：大多数浏览器要求静音才能自动播放，所以如果 autoplay=true，建议同时设置 mute=true
+      // 但是当 mute=false 时，需要显式传递 mute=0，否则 player.html 在 autoplay=true 时会默认静音
       if (mute) {
         params.set('mute', '1');
+      } else {
+        // 当 mute=false 时，显式设置 mute=0，确保不会默认静音
+        params.set('mute', '0');
       }
       
       const queryString = params.toString();
-      return `https://www.youtube.com/embed/${videoId}${queryString ? '?' + queryString : ''}`;
+      // 使用 CDN 上的 player.html 作为中间层
+      return `${YOUTUBE_PLAYER_URL}?${queryString}`;
     }
   } else if (platform === Platform.BILIBILI) {
     // Bilibili URL 转换
-    // 支持格式：
-    // - https://www.bilibili.com/video/BVxxxxx
-    // - https://www.bilibili.com/video/avxxxxx
-    // - https://www.bilibili.com/video/BVxxxxx?p=2 (分P视频)
     let bvid: string | null = null;
     let aid: string | null = null;
     let pageParam = '&page=1';
